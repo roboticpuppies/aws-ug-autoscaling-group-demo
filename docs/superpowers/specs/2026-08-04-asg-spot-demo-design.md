@@ -98,8 +98,20 @@ Instance egress stays open: outbound is required for Docker Hub, SSM, and `compl
 
 - Managed policy `AmazonSSMManagedInstanceCore` — enables SSM Run Command, so the demo needs no SSH key and no port 22.
 - Inline policy: `autoscaling:CompleteLifecycleAction` and `autoscaling:RecordLifecycleActionHeartbeat`, scoped to this ASG's ARN.
+- Inline policy: `ec2:CreateTags`, so the instance can name itself (§6). Scope it tightly — this is the one permission here that could otherwise reach beyond the demo:
 
-To scope that inline policy without a Terraform dependency cycle (the ASG needs the instance profile, the profile's policy needs the ASG ARN), the ASG name is set explicitly from a variable and the ARN is constructed from known account/region/name rather than read off the ASG resource.
+  | Element | Value |
+  | --- | --- |
+  | Action | `ec2:CreateTags` |
+  | Resource | `arn:aws:ec2:<region>:<account>:instance/*` |
+  | Condition | `StringEquals` on `aws:ResourceTag/Project` = `Demo` |
+  | Condition | `ForAllValues:StringEquals` on `aws:TagKeys` = `["Name"]` |
+
+  The two conditions together mean an instance can write only the `Name` tag, and only onto instances already carrying `Project=Demo`. It cannot touch unrelated instances in the account, and cannot alter any other tag — including the `Project` tag that gates its own access.
+
+  **Ordering dependency, worth stating because it is easy to break:** the `aws:ResourceTag/Project` condition is evaluated against tags the instance *already has*. It works only because the ASG propagates `Project=Demo` at launch (§7), before user-data runs. If that propagation is ever removed, self-tagging silently starts failing with `UnauthorizedOperation`.
+
+To scope the autoscaling policy without a Terraform dependency cycle (the ASG needs the instance profile, the profile's policy needs the ASG ARN), the ASG name is set explicitly from a variable and the ARN is constructed from known account/region/name rather than read off the ASG resource. Use `data.aws_caller_identity` and `data.aws_region` for the account and region in both policies.
 
 **FIS role:** trusted by `fis.amazonaws.com`. Attach the AWS managed policy [`AWSFaultInjectionSimulatorEC2Access`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AWSFaultInjectionSimulatorEC2Access.html), which the actions reference names as the managed policy for this action — it already covers `ec2:SendSpotInstanceInterruptions` and `ec2:DescribeInstances`, the only two permissions the action requires. Prefer it over a hand-rolled policy: one line instead of a custom document, and it tracks AWS's own changes. Add CloudWatch read separately for the stop-condition alarm. See [IAM roles for FIS experiments](https://docs.aws.amazon.com/fis/latest/userguide/getting-started-iam-service-role.html).
 
@@ -112,7 +124,7 @@ Reference: [Session Manager prerequisites / instance permissions](https://docs.a
 - Instance profile and `instance_sg` attached.
 - Default `instance_type = t4g.micro` — overridden per-type by the mixed instances policy, but set so the template is valid standalone.
 - `user_data` = base64 of the rendered bootstrap script.
-- Tag specifications: `Project=Demo`.
+- Tag specifications: `Project=Demo`. No `Name` — instances set their own (§6).
 - `key_name` attached only when the optional variable is set (§13); unset by default.
 
 **Gotcha to encode:** do **not** set `instance_market_options` on the launch template. Spot purchasing is owned by the ASG's mixed instances policy; setting it in both places conflicts. Worth calling out in `docs/spot-strategy.md` — it's a common trap.
@@ -122,13 +134,21 @@ Reference: [Session Manager prerequisites / instance permissions](https://docs.a
 Rendered from `terraform/templates/user-data.sh.tftpl`. Logs everything to `/var/log/user-data.log`.
 
 1. Fetch an IMDSv2 token, then read instance ID, AZ, instance type, and `instance-life-cycle` (`spot` vs `on-demand`).
-2. Write `/opt/demo/html/index.html` showing all four values — so a browser refresh against the ALB visibly proves which instance served the request, and whether it was Spot.
-3. `docker pull nginx:alpine` (cache hit from the AMI), then `docker run -d --name web -p 80:80 -v /opt/demo/html:/usr/share/nginx/html:ro nginx:alpine`.
-4. Poll `curl -fs localhost:80` until it returns 200, with a bounded retry count.
-5. On success: `aws autoscaling complete-lifecycle-action --lifecycle-action-result CONTINUE` for the launch hook, passing the instance ID, hook name, and ASG name (hook and ASG names injected by Terraform at render time).
-6. On failure: complete with `ABANDON` so a broken instance is replaced promptly instead of waiting out the heartbeat timeout.
+2. **Name itself.** Compute `<asg-name>-<last 5 characters of the instance ID>` and apply it as the `Name` tag on its own instance via `aws ec2 create-tags`. The ASG name is already injected by Terraform for step 6, so reuse it.
+3. Write `/opt/demo/html/index.html` showing the computed name plus all four metadata values — so a browser refresh against the ALB visibly proves which instance served the request, and whether it was Spot.
+4. `docker pull nginx:alpine` (cache hit from the AMI), then `docker run -d --name web -p 80:80 -v /opt/demo/html:/usr/share/nginx/html:ro nginx:alpine`.
+5. Poll `curl -fs localhost:80` until it returns 200, with a bounded retry count.
+6. On success: `aws autoscaling complete-lifecycle-action --lifecycle-action-result CONTINUE` for the launch hook, passing the instance ID, hook name, and ASG name (hook and ASG names injected by Terraform at render time).
+7. On failure of nginx: complete with `ABANDON` so a broken instance is replaced promptly instead of waiting out the heartbeat timeout.
 
 This is the point of the launch hook: the instance is not `InService` and takes no ALB traffic until nginx is actually answering. Not merely "EC2 booted".
+
+**On the self-naming step.** The pattern deliberately echoes Kubernetes pod names — `asg-demo-4f7a2` — so instances are identifiable at a glance in the console, in `make status`, and on the served page, instead of appearing as a wall of identical blank-named rows.
+
+Two properties to be aware of:
+
+- **Uniqueness is probabilistic, not guaranteed.** Five hex characters is about a million combinations; with at most 5 instances a collision is vanishingly unlikely but not impossible. Kubernetes pod suffixes have the same property. Do not build anything that depends on the name being unique — the instance ID remains the identifier.
+- **Tagging failure must not fail the bootstrap.** The `Name` tag is cosmetic. If `create-tags` errors, log it and carry on to start nginx; do not abandon an otherwise healthy instance over a label. Only nginx failing to answer triggers `ABANDON`.
 
 ### 7. Auto Scaling group
 
@@ -144,7 +164,9 @@ This is the point of the launch hook: the instance is not `InService` and takes 
   - `spot_allocation_strategy = capacity-optimized-prioritized` — honors the override order as best-effort while still favoring the deepest capacity pools. `price-capacity-optimized` was considered and rejected: it ignores override order for Spot, which would silently discard the requested type prioritization.
 - **Capacity Rebalance:** `capacity_rebalance = true`. EC2 emits a *rebalance recommendation* when a Spot instance is at elevated risk of interruption — earlier than the two-minute interruption notice. With this enabled the ASG proactively launches a replacement on that earlier signal instead of waiting for the reclaim. This is the core mechanism behind the talk's claim that Spot need not cost you availability, so it gets explicit stage time. See [Capacity Rebalancing](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-capacity-rebalancing.html).
 - **AZ distribution:** `balanced-best-effort` — spreads across AZs but will not block a launch when one AZ has no Spot capacity. Note this is already the provider default; it is set explicitly so the behavior is visible in the code on screen rather than implied.
-- **Tags:** `Project=Demo` and `Name`, both propagating at launch. `Project=Demo` is also what FIS targets on.
+- **Tags:**
+  - `Project=Demo` with `propagate_at_launch = true`. This is what FIS targets on, and what the `ec2:CreateTags` condition in §4 checks — so it must reach instances at launch.
+  - `Name` on the ASG resource itself with **`propagate_at_launch = false`**. Instances name themselves in user-data (§6); propagating a `Name` here too would mean the ASG writes one value and user-data immediately overwrites it, which is confusing to watch on stage and pointless. The ASG still gets its own `Name` for the console.
 
 Reference: [Auto Scaling groups with multiple instance types and purchase options](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-mixed-instances-groups.html), [Allocation strategies](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-az-instance-type-distribution.html), [`aws_autoscaling_group`](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/autoscaling_group).
 
@@ -261,7 +283,7 @@ Every target derives region, ASG name, target group ARN, and FIS experiment temp
 | --- | --- |
 | `url` | Prints the ALB DNS name |
 | `poll` | curl loop against the ALB, printing the serving instance ID each second. Makes scale-out and instance replacement visible rather than asserted |
-| `status` | ASG instances: instance ID, AZ, lifecycle (`spot` / `on-demand`), health, lifecycle state. The Spot-vs-On-Demand split becomes concrete here |
+| `status` | ASG instances: `Name` tag, instance ID, AZ, lifecycle (`spot` / `on-demand`), health, lifecycle state. The Spot-vs-On-Demand split becomes concrete here. Show `Name` first — it is the readable handle (§6) |
 | `activity` | ASG activity history — scaling events and lifecycle hook results |
 | `targets` | Target group health |
 | `stress` | SSM Run Command running `stress-ng` on all in-service instances |
@@ -332,9 +354,11 @@ No application tests. Verification is static checks plus one full rehearsal.
 7. Terminate hook visibly holds an instance in `Terminating:Wait`.
 8. FIS interrupts one Spot instance; a replacement launches; `HealthyHostCount` never reaches 0 and the ALB keeps serving.
 9. Capacity Rebalance is active on the ASG (`describe-auto-scaling-groups` shows `CapacityRebalance: true`), and the FIS run shows a replacement launching off the rebalance signal rather than only after the reclaim.
-10. `git grep` finds no key material, and no port-22 rule exists with the default variable values.
-11. Every `make` target in §14 runs against the live stack without error, and each demo driver prints what it claims to.
-12. `make destroy` followed by `make clean-ami` leaves nothing behind — including the AMI and its snapshot, which Terraform does not own.
+10. Every instance carries a `Name` tag matching `<asg-name>-<5 chars>`, set by itself, and no instance is left with the ASG-propagated name or no name at all. The served page shows the same value.
+11. Removing the `ec2:CreateTags` permission makes self-naming fail *without* failing the bootstrap — instances still reach `InService`. Confirms the tag is genuinely non-fatal (§6). Worth checking once, since the failure mode is silent by design.
+12. `git grep` finds no key material, and no port-22 rule exists with the default variable values.
+13. Every `make` target in §14 runs against the live stack without error, and each demo driver prints what it claims to.
+14. `make destroy` followed by `make clean-ami` leaves nothing behind — including the AMI and its snapshot, which Terraform does not own.
 
 ## Risks and open verifications
 

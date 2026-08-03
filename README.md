@@ -75,11 +75,15 @@ Left out on purpose, to keep the stack legible and cheap:
 
 1. The ASG launches an instance from the Packer AMI.
 2. A **launch lifecycle hook** holds it in `Pending:Wait`. It is not in service, and the ALB sends it nothing.
-3. User-data reads the instance's own ID, AZ, type, and whether it is Spot or On-Demand from instance metadata, writes them into an HTML file, and starts nginx in Docker serving that file.
-4. User-data polls its own port 80 until nginx answers, then calls `complete-lifecycle-action` to release the hook.
-5. The instance goes `InService`, passes ALB health checks, and starts taking traffic.
+3. User-data reads the instance's own ID, AZ, type, and whether it is Spot or On-Demand from instance metadata.
+4. **The instance names itself** `asg-demo-4f7a2` — the ASG name plus the last five characters of its own instance ID, deliberately echoing the way Kubernetes names pods. It writes that as its own `Name` tag. Instances are then identifiable at a glance instead of being a wall of blank rows in the console.
+5. User-data writes the name and metadata into an HTML file and starts nginx in Docker serving it.
+6. User-data polls its own port 80 until nginx answers, then calls `complete-lifecycle-action` to release the hook.
+7. The instance goes `InService`, passes ALB health checks, and starts taking traffic.
 
 The point: an instance joins the load balancer when the *application* is ready, not when the *EC2 instance* has booted. If bootstrap fails, the hook times out as `ABANDON` and the instance is replaced instead of joining half-built.
+
+Self-naming needs `ec2:CreateTags`, which the instance role grants — but narrowly. It is restricted to writing only the `Name` key, and only onto instances already tagged `Project=Demo`, so an instance cannot rename anything else in the account or edit any other tag.
 
 ### Scaling on load
 
@@ -131,7 +135,7 @@ make apply     # create the stack
 
 ```bash
 make url       # print the ALB address
-make status    # ASG instances: ID, AZ, spot or on-demand, health
+make status    # ASG instances: name, ID, AZ, spot or on-demand, health
 make poll      # curl loop — prints which instance served each request
 
 make stress    # drive CPU up via SSM, triggers scale-out
