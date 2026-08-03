@@ -1,6 +1,10 @@
 # AWS UG Auto-Scaling & Spot Demo — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** work through the tasks below in order. Each task's steps use checkbox (`- [ ]`) syntax for tracking. Run every check a task lists, and do not start the next task while one is failing.
+>
+> *If you are running inside Claude Code:* optionally use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to drive this. *If you are any other agent* — Codex, Cursor, Gemini CLI, Copilot — ignore that sentence; those are Claude Code skills and have no meaning for you. Nothing else in this plan depends on them.
+>
+> Read `AGENTS.md` at the repository root before starting. It holds the conventions and the list of commands you must never run.
 
 **Goal:** Build a Terraform + Packer stack in `ap-southeast-1` that demonstrates EC2 Auto Scaling with a mostly-Spot mixed instances policy, lifecycle hooks on both launch and terminate, and an AWS FIS Spot-interruption experiment, driven by a `make`-based command surface.
 
@@ -91,7 +95,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 | Path | Responsibility |
 | --- | --- |
-| `AGENTS.md` | Conventions and command gate for any agent working in this repo |
+| `AGENTS.md` | Already exists. Conventions and command gate for any agent working in this repo — read it, do not rewrite it |
 | `packer/asg-demo.pkr.hcl` | AMI definition: source AMI filter, build, tags |
 | `packer/scripts/provision.sh` | Package installation and assertions inside the AMI |
 | `terraform/versions.tf` | Terraform and provider version pins, provider config |
@@ -114,10 +118,9 @@ Two deviations from the spec's illustrative layout, both deliberate: `locals.tf`
 
 ---
 
-### Task 1: Repository conventions and Terraform skeleton
+### Task 1: Terraform skeleton
 
 **Files:**
-- Create: `AGENTS.md`
 - Create: `terraform/versions.tf`
 - Create: `terraform/variables.tf`
 - Create: `terraform/locals.tf`
@@ -126,71 +129,7 @@ Two deviations from the spec's illustrative layout, both deliberate: `locals.tf`
 - Consumes: nothing.
 - Produces: `var.region`, `var.name_prefix`, `var.vpc_cidr`, `var.subnet_cidrs`, `var.instance_types`, `var.min_size`, `var.desired_capacity`, `var.max_size`, `var.cpu_target`, `var.key_name`, `var.ssh_ingress_cidr`, `var.fis_duration_before_interruption`; `local.asg_name`, `local.launch_hook_name`, `local.terminate_hook_name`, `local.tags`. Every later task uses these exact names.
 
-- [ ] **Step 1: Write `AGENTS.md`**
-
-```markdown
-# Working in this repository
-
-Demo infrastructure for an AWS User Group talk on EC2 Auto Scaling and Spot
-Instances. Terraform builds the stack, Packer builds the AMI, and a Makefile is
-the command surface.
-
-## Read this first
-
-`docs/superpowers/specs/2026-08-04-asg-spot-demo-design.md` is the approved
-design and the source of truth. Values in it — capacities, timeouts, scaling
-targets, allocation strategies — were each chosen for a documented reason.
-Do not change one to make something pass. If a value looks wrong, say so
-instead of editing it.
-
-## Commands you must never run
-
-These create real, billable AWS resources under the repository owner's
-credentials. The owner runs them personally.
-
-- `terraform apply`
-- `terraform destroy`
-- `terraform plan` (reaches AWS)
-- `packer build`
-- any `aws` CLI call that creates, modifies or deletes anything
-
-## Commands you should run
-
-- `make fmt` — format Terraform
-- `make validate` — Terraform and Packer validation, no credentials needed
-- `bash -n <file>` and `shellcheck <file>` — for shell scripts
-- `terraform -chdir=terraform init -backend=false` — downloads providers, no AWS calls
-
-## Conventions
-
-- **Region is `ap-southeast-1`.** Never `ap-southeast-3`: AWS FIS does not
-  exist there, and the Spot-interruption demo is half the point of this repo.
-- **Every taggable resource carries `Project = "Demo"`.** It is not decoration.
-  FIS target selection, the SSM Run Command filter, and an IAM condition on
-  `ec2:CreateTags` all depend on it. Take it from `local.tags`.
-- **No provider `default_tags`.** Tag explicitly, so Auto Scaling group tag
-  propagation stays predictable.
-- **All names derive from `var.name_prefix`** (default `asg-demo`).
-- **No secrets, ever** — no private keys, no webhook URLs, no credentials, in
-  any file. Access to instances is via SSM Session Manager.
-
-## Two file-format traps
-
-1. In `terraform/templates/user-data.sh.tftpl`, write shell variables as
-   `$VAR`, **never** `${VAR}`. Terraform's `templatefile()` eats `${...}` as
-   its own interpolation. Keeping braces out also keeps the file valid Bash,
-   so `bash -n` and `shellcheck` work on it directly.
-2. In the `Makefile`, indent recipes with a literal TAB, and write a literal
-   shell `$` as `$$`.
-
-## Style
-
-Terraform: `terraform fmt` canonical form, one resource per logical block,
-comments only where a choice is non-obvious. Shell: `set -euo pipefail`,
-`shellcheck`-clean.
-```
-
-- [ ] **Step 2: Write `terraform/versions.tf`**
+- [ ] **Step 1: Write `terraform/versions.tf`**
 
 ```hcl
 terraform {
@@ -212,7 +151,7 @@ provider "aws" {
 }
 ```
 
-- [ ] **Step 3: Write `terraform/variables.tf`**
+- [ ] **Step 2: Write `terraform/variables.tf`**
 
 ```hcl
 variable "region" {
@@ -288,7 +227,7 @@ variable "fis_duration_before_interruption" {
 }
 ```
 
-- [ ] **Step 4: Write `terraform/locals.tf`**
+- [ ] **Step 3: Write `terraform/locals.tf`**
 
 ```hcl
 locals {
@@ -304,13 +243,13 @@ locals {
 }
 ```
 
-- [ ] **Step 5: Initialise providers (no AWS calls)**
+- [ ] **Step 4: Initialise providers (no AWS calls)**
 
 Run: `terraform -chdir=terraform init -backend=false`
 
 Expected: ends with `Terraform has been successfully initialized!`. It downloads `hashicorp/aws` v6.x. If it tries to contact AWS or asks for credentials, stop — something is wrong with the config.
 
-- [ ] **Step 6: Validate and check formatting**
+- [ ] **Step 5: Validate and check formatting**
 
 Run:
 ```bash
@@ -322,7 +261,7 @@ Expected: `fmt -check` prints nothing and exits 0. `validate` prints `Success! T
 
 If `fmt -check` lists files, run `terraform -chdir=terraform fmt -recursive` and re-check.
 
-- [ ] **Step 7: Confirm required values are present**
+- [ ] **Step 6: Confirm required values are present**
 
 Run:
 ```bash
@@ -337,11 +276,11 @@ echo OK
 
 Expected: prints `OK`. Any failure means a Global Constraint value is missing.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add AGENTS.md terraform/versions.tf terraform/variables.tf terraform/locals.tf
-git commit -m "Add agent conventions and Terraform skeleton"
+git add terraform/versions.tf terraform/variables.tf terraform/locals.tf
+git commit -m "Add Terraform skeleton"
 ```
 
 ---
