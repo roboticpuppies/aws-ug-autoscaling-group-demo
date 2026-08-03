@@ -19,7 +19,7 @@ Next steps, in order:
 
 **Who does what.** This spec and the implementation plan are authored by Claude; the code is written by a *different* AI agent that will not have seen the design conversation. Everything an implementer needs must therefore be explicit here or in the plan — file paths, resource names, and acceptance criteria that can be checked objectively. Claude reviews the resulting code against this spec afterwards.
 
-**Human-gated commands.** No agent runs `terraform apply`, `terraform destroy`, or `packer build`. Those create real, billable AWS resources. Agents are limited to `terraform fmt`, `terraform validate`, and `packer validate`. The rehearsal under [Verification](#verification) is the author's own step, so a review can confirm spec conformance and static correctness but never runtime behavior.
+**Human-gated commands.** No agent runs `terraform apply`, `terraform destroy`, or `packer build`. Those create real, billable AWS resources. Agents are limited to `make fmt` and `make validate`; the Makefile in §14 groups its targets by exactly this boundary. The rehearsal under [Verification](#verification) is the author's own step, so a review can confirm spec conformance and static correctness but never runtime behavior.
 
 ## Goal
 
@@ -41,6 +41,7 @@ Deliberately out of scope, to keep the stack readable on a projector and cheap t
 - EventBridge + Lambda driven graceful drain — documented as an alternative, not built.
 - Application-level tests. This is infrastructure demo code.
 - SSH key material of any kind in version control. See §13 for the access design.
+- Availability measurement. Nothing in this stack measures uptime, and no CloudWatch dashboard is built. The talk's 99.95% figure is an architectural argument — On-Demand floor, multi-AZ spread, ALB health checks, Capacity Rebalance — not a number this demo produces. The demo shows the *mechanisms* that support the claim. Worth being straight about that on stage rather than implying the graph proves it, because there is no graph.
 
 ## Architecture
 
@@ -229,6 +230,47 @@ No key material, no port 22, no inbound SG rule, and every session is audited in
 
 Both default to unset, so the stack has no SSH surface unless someone deliberately opts in with their own key and their own IP. `docs/runbook.md` documents Session Manager as the way in; `README.md` notes the two variables for anyone who insists on SSH, with a warning against `0.0.0.0/0`.
 
+### 14. Makefile
+
+A root `Makefile` is the demo's command surface. Two reasons it exists: typing long `aws ssm send-command` and `aws fis start-experiment` invocations live is error-prone and dull to watch, and it keeps the runbook from drifting — the doc references `make stress`, and the Makefile holds the one real definition of what that means.
+
+**Recipes must not be silenced with `@`.** Let make echo each command before running it. On stage the audience then sees the actual AWS CLI call scroll past while the presenter typed three words. Hiding the command would defeat the point of demoing it.
+
+Every target derives region, ASG name, target group ARN, and FIS experiment template ID from `terraform output` — never hardcoded, so the Makefile cannot drift from the deployed stack. `make help` is the default target. All targets are `.PHONY`.
+
+**Agent-safe** — the implementing agent may run these:
+
+| Target | Does |
+| --- | --- |
+| `help` | Lists targets. Default goal |
+| `fmt` | `terraform fmt` |
+| `validate` | `terraform validate` and `packer validate` |
+
+**Human-only** — creates, changes, or destroys billable resources. Per the Status section no agent runs these:
+
+| Target | Does |
+| --- | --- |
+| `ami` | `packer build` |
+| `init`, `plan`, `apply` | Terraform lifecycle |
+| `destroy` | `terraform destroy`, prompting for confirmation. Never `-auto-approve` |
+| `clean-ami` | Deregisters the Packer AMI and deletes its snapshot — Terraform does not own them, so `destroy` leaves them behind |
+
+**Demo drivers** — what the talk actually runs:
+
+| Target | Does |
+| --- | --- |
+| `url` | Prints the ALB DNS name |
+| `poll` | curl loop against the ALB, printing the serving instance ID each second. Makes scale-out and instance replacement visible rather than asserted |
+| `status` | ASG instances: instance ID, AZ, lifecycle (`spot` / `on-demand`), health, lifecycle state. The Spot-vs-On-Demand split becomes concrete here |
+| `activity` | ASG activity history — scaling events and lifecycle hook results |
+| `targets` | Target group health |
+| `stress` | SSM Run Command running `stress-ng` on all in-service instances |
+| `unstress` | Kills `stress-ng`, so scale-in can be shown too |
+| `interrupt` | Starts the FIS experiment |
+| `session` | `aws ssm start-session --target $(INSTANCE)` — requires `INSTANCE=i-...` |
+
+`poll` and `status` carry the most weight: without them, scale-out and the Spot split are claims rather than observations.
+
 ## Repository layout
 
 ```
@@ -254,6 +296,7 @@ docs/
   spot-strategy.md          # mixed policy, prioritization, cost story
   fis.md
   instance-refresh.md
+Makefile                    # command surface — see §14
 README.md
 ```
 
@@ -261,7 +304,7 @@ README.md
 
 Everything lives in `docs/`, per requirement. **Every doc links out to the official AWS documentation for the features it describes** — the audience should be able to leave the talk with authoritative sources, not just this repo's paraphrase. A `References` section at the end of each doc collects them.
 
-- **`runbook.md`** — the stage script, in order: Packer build → `terraform apply` → curl/browse the ALB → SSM Run Command to apply CPU load → what to watch (CloudWatch CPU, ASG activity history, target group health, browser refresh showing new instance IDs) → FIS experiment → observe replacement → `terraform destroy`. Includes rough timings so the talk can be paced.
+- **`runbook.md`** — the stage script, written as a sequence of `make` targets (§14) rather than raw commands, so the doc cannot drift from what the Makefile does: `make ami` → `make apply` → `make url` and `make status` → `make poll` in a second pane → `make stress` → what to watch (CloudWatch CPU, `make activity`, `make targets`, instance IDs rotating in `poll`) → `make unstress` to show scale-in → `make interrupt` → observe replacement → `make destroy` and `make clean-ami`. Includes rough timings so the talk can be paced, and states plainly that the 99.95% figure is an architectural argument rather than something measured here.
 - **`packer.md`** — what goes into the AMI and why, how to build, how to verify contents, how Terraform selects the newest build.
 - **`lifecycle-hooks.md`** — both hooks, how the launch hook self-completes, why the terminate hook is a plain wait here, and the EventBridge + Lambda alternative for production.
 - **`spot-strategy.md`** — mixed instances policy explained: On-Demand base as the availability floor, allocation strategies, type prioritization, Capacity Rebalance, the AZ distribution setting, the `instance_market_options` trap, and the cost comparison that backs the talk title.
@@ -272,7 +315,7 @@ Everything lives in `docs/`, per requirement. **Every doc links out to the offic
 
 No application tests. Verification is static checks plus one full rehearsal.
 
-**Static:** `packer validate`, `terraform fmt -check`, `terraform validate`, `terraform plan`.
+**Static:** `make fmt` and `make validate` (which wrap `terraform fmt`, `terraform validate`, and `packer validate`), plus `terraform plan`.
 
 **Rehearsal — apply → demo → destroy, at least once before the talk, confirming:**
 
@@ -286,7 +329,8 @@ No application tests. Verification is static checks plus one full rehearsal.
 8. FIS interrupts one Spot instance; a replacement launches; `HealthyHostCount` never reaches 0 and the ALB keeps serving.
 9. Capacity Rebalance is active on the ASG (`describe-auto-scaling-groups` shows `CapacityRebalance: true`), and the FIS run shows a replacement launching off the rebalance signal rather than only after the reclaim.
 10. `git grep` finds no key material, and no port-22 rule exists with the default variable values.
-11. `terraform destroy` leaves nothing behind. Delete the Packer AMI and its snapshot separately — Terraform does not own them.
+11. Every `make` target in §14 runs against the live stack without error, and each demo driver prints what it claims to.
+12. `make destroy` followed by `make clean-ami` leaves nothing behind — including the AMI and its snapshot, which Terraform does not own.
 
 ## Risks and open verifications
 
