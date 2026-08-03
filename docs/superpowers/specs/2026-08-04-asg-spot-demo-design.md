@@ -3,18 +3,19 @@
 Design doc for the live demo supporting the talk *"Auto-Scaling & Spot Instance: SLA 99.95% dengan Biaya Lebih Hemat"*.
 
 - **Date:** 2026-08-04
-- **Region:** `ap-southeast-3` (Jakarta)
+- **Region:** `ap-southeast-1` (Singapore)
 - **IaC:** Terraform (infrastructure) + Packer (AMI)
+
+> **Why not Jakarta.** `ap-southeast-3` was the first choice for latency, but AWS FIS does not exist there — it is absent from the [FIS endpoints list](https://docs.aws.amazon.com/general/latest/gr/fis.html), and the EC2 guide names Asia Pacific (Jakarta) explicitly among the Regions where initiating a Spot interruption is unsupported. FIS is regional, so it must run where the instances are; there is no split-region workaround short of a second full stack. Singapore is the nearest Region with FIS, and offers all four chosen instance types in all three of its AZs.
 
 ## Status
 
-Design approved in outline; this document is written and committed. **Not yet implemented — no Terraform or Packer code exists.**
+Design approved in outline, and the AWS documentation verification pass is complete — its results are folded in throughout and summarised under [References](#references). **Not yet implemented — no Terraform or Packer code exists.**
 
 Next steps, in order:
 
-1. Run the AWS documentation verification pass on the four items listed under [References](#references), and fold any corrections into this document.
-2. Write the implementation plan.
-3. Hand off to the implementing agent.
+1. Write the implementation plan.
+2. Hand off to the implementing agent.
 
 **Who does what.** This spec and the implementation plan are authored by Claude; the code is written by a *different* AI agent that will not have seen the design conversation. Everything an implementer needs must therefore be explicit here or in the plan — file paths, resource names, and acceptance criteria that can be checked objectively. Claude reviews the resulting code against this spec afterwards.
 
@@ -65,20 +66,18 @@ Deliberately out of scope, to keep the stack readable on a projector and cheap t
 `packer/asg-demo.pkr.hcl`, HCL2 template.
 
 - **Base:** Amazon Linux 2023, `arm64`, resolved via SSM public parameter (not a hardcoded AMI ID).
-- **Build instance:** `t4g.micro` in `ap-southeast-3`.
+- **Build instance:** `t4g.micro` in `ap-southeast-1`.
 - **Installed:**
   - Docker Engine (`dnf install -y docker`), enabled and started via systemd.
   - AWS CLI v2 (`dnf install -y awscli-2`). AL2023 ships a v2 CLI already; the build installs explicitly and asserts `aws --version` so the AMI's contents are not left to base-image drift.
-  - `stress-ng`, for the CPU-trigger demo.
+  - `stress-ng` (`dnf install -y stress-ng`), for the CPU-trigger demo. Confirmed present in the AL2023 repos — see [Packages formerly in EPEL](https://docs.aws.amazon.com/linux/al2023/ug/epel.html). No EPEL or SPAL repo needs enabling.
   - `nginx:alpine` pre-pulled into the local Docker image cache, so user-data's `docker pull` is a fast cache hit and scale-out looks snappy on stage.
 - **Tags:** `Project=Demo`, plus `Name` and a build-version tag so Terraform can select the newest build.
-
-**Verify during implementation:** `stress-ng` is not guaranteed to be present in AL2023's default repos. Attempt `dnf install -y stress-ng` first. If it is unavailable, fall back to pre-pulling a stress-ng container image into the AMI cache (Docker is already there) and adjust `docs/runbook.md` to invoke it via `docker run`. Do not leave the AMI without a working CPU load generator.
 
 ### 2. Network
 
 - VPC `10.0.0.0/16`.
-- Three public subnets, `/24` each, one per AZ across the three AZs of `ap-southeast-3`, with `map_public_ip_on_launch = true`.
+- Three public subnets, `/24` each, one per AZ across the three AZs of `ap-southeast-1` (`ap-southeast-1a`, `1b`, `1c`), with `map_public_ip_on_launch = true`. Discover them with a `data.aws_availability_zones` lookup rather than hardcoding names.
 - One Internet Gateway, one public route table, three associations.
 
 Public subnets only — instances need outbound reach for `docker pull`, SSM, and the Autoscaling API, and a NAT gateway would add cost and explanation for no demo value.
@@ -101,7 +100,7 @@ Instance egress stays open: outbound is required for Docker Hub, SSM, and `compl
 
 To scope that inline policy without a Terraform dependency cycle (the ASG needs the instance profile, the profile's policy needs the ASG ARN), the ASG name is set explicitly from a variable and the ARN is constructed from known account/region/name rather than read off the ASG resource.
 
-**FIS role:** trusted by `fis.amazonaws.com`; grants `ec2:SendSpotInstanceInterruptions` plus the EC2 describe calls FIS needs for target resolution, and CloudWatch read for the stop condition. See [IAM roles for FIS experiments](https://docs.aws.amazon.com/fis/latest/userguide/getting-started-iam-service-role.html).
+**FIS role:** trusted by `fis.amazonaws.com`. Attach the AWS managed policy [`AWSFaultInjectionSimulatorEC2Access`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AWSFaultInjectionSimulatorEC2Access.html), which the actions reference names as the managed policy for this action — it already covers `ec2:SendSpotInstanceInterruptions` and `ec2:DescribeInstances`, the only two permissions the action requires. Prefer it over a hand-rolled policy: one line instead of a custom document, and it tracks AWS's own changes. Add CloudWatch read separately for the stop-condition alarm. See [IAM roles for FIS experiments](https://docs.aws.amazon.com/fis/latest/userguide/getting-started-iam-service-role.html).
 
 Reference: [Session Manager prerequisites / instance permissions](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-prerequisites.html), [`CompleteLifecycleAction`](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_CompleteLifecycleAction.html).
 
@@ -186,10 +185,24 @@ Door open if it's ever needed; nothing fires on stage.
 
 ### 12. AWS FIS
 
-- **Experiment template action:** `aws:ec2:send-spot-instance-interruptions`, with `durationBeforeInterruption = PT2M` so the real 2-minute interruption notice is delivered.
-- **Target:** resource type `aws:ec2:spot-instance`, selected by tag `Project=Demo`, filtered to running instances, selection mode `COUNT(1)`.
-- **Stop condition:** CloudWatch alarm on the ALB's `HealthyHostCount` dropping below 1 — aborts the experiment rather than deepening an outage.
-- **Role:** the FIS role above.
+Field names below are verified against the [FIS actions reference](https://docs.aws.amazon.com/fis/latest/userguide/fis-actions-reference.html) and the [Spot interruption tutorial](https://docs.aws.amazon.com/fis/latest/userguide/fis-tutorial-spot-interruptions.html). Use them exactly; they are easy to get subtly wrong.
+
+| Element | Value |
+| --- | --- |
+| Action ID | `aws:ec2:send-spot-instance-interruptions` |
+| Action target key | `SpotInstances` (this exact key — it is not the target's own name) |
+| Action parameter | `durationBeforeInterruption`, ISO 8601, valid range 2–15 minutes |
+| Target resource type | `aws:ec2:spot-instance` |
+| Target resource tag | `Project=Demo` |
+| Target filter | path `State.Name`, value `running` |
+| Selection mode | `COUNT(1)` |
+| Role | the FIS role above |
+
+**Stop condition:** CloudWatch alarm on the ALB's `HealthyHostCount` dropping below 1 — aborts the experiment rather than deepening an outage. (The AWS tutorial uses `source = "none"`; we deliberately do not, because this runs in front of an audience.)
+
+**`durationBeforeInterruption` is a stage-timing knob, and `PT2M` is probably the wrong choice.** Per the docs, the rebalance recommendation arrives *immediately* when the action starts, while the interruption notice arrives two minutes before the actual interruption. So at the `PT2M` minimum the two signals land almost together and Capacity Rebalance's head start is invisible — the very thing worth showing. A larger value (`PT5M`, say) separates them: rebalance recommendation at t=0, interruption notice around t=3m, termination at t=5m, leaving a visible window where the ASG has already launched a replacement while the doomed instance is still serving. Set `PT5M`, and confirm the observed timeline during rehearsal — this reading of the interaction between the two signals is inferred from the documentation, not something AWS spells out end to end.
+
+**Quota:** the default is 5 Spot Instances per experiment when targeting by tags, which `COUNT(1)` sits well inside.
 
 `docs/fis.md` covers how to start the experiment, the sequence it triggers (rebalance recommendation and interruption notice → instance goes to `Terminating:Wait` and the terminate hook holds it → ASG launches a replacement, best-effort in another AZ → ALB routes only to healthy targets), and how to verify each step.
 
@@ -280,11 +293,13 @@ No application tests. Verification is static checks plus one full rehearsal.
 | Risk | Mitigation |
 | --- | --- |
 | 10% CPU target scales out from idle noise, mid-sentence | Rehearse; be ready to explain it as a deliberate demo setting |
-| `stress-ng` may not be in AL2023 default repos | Verify at build time; container-image fallback (see §1) |
-| Spot capacity for `t4g`/`c6g` in `ap-southeast-3` | Four instance types plus best-effort AZ spread; confirm each type is actually offered in this region before the talk |
-| `availability_zone_distribution` is a recent ASG feature | Pin a recent AWS provider version in `versions.tf` |
+| Spot capacity shortfall at demo time | Four instance types, all confirmed offered in all three `ap-southeast-1` AZs, plus best-effort AZ spread |
+| `availability_zone_distribution` is a recent ASG feature | Pin a recent AWS provider version in `versions.tf` (`~> 6.0`) |
 | FIS action requires a genuinely Spot instance | Desired 3 with On-Demand base 1 guarantees 2 Spot instances |
+| Rebalance recommendation and interruption notice arrive too close together to show separately | Use `durationBeforeInterruption = PT5M`, not the `PT2M` minimum — see §12 |
 | Demo network is slow | `nginx:alpine` pre-baked into the AMI so bootstrap does not depend on a full pull |
+
+Resolved during the verification pass, kept here so they are not re-litigated: `stress-ng` **is** in the AL2023 repos; all four instance types **are** offered in `ap-southeast-1`; the FIS action **does** emit a rebalance recommendation. Region moved off `ap-southeast-3` because FIS does not exist there.
 
 ## Cost
 
@@ -307,11 +322,15 @@ Provider behavior below was confirmed against the Terraform AWS provider source 
 - [Instance metadata (IMDSv2)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html)
 - [Packer Amazon EBS builder](https://developer.hashicorp.com/packer/integrations/hashicorp/amazon/latest/components/builder/ebs)
 
-**Pending verification pass:** the AWS Documentation MCP server was connected mid-design but requires a session restart to become available. Before implementation, re-check against it:
+**Verification pass — complete (2026-08-04).** Checked against the AWS documentation and, for Region-specific facts, the EC2 API:
 
-- Exact FIS action parameter and target-key names for `aws:ec2:send-spot-instance-interruptions`.
-- Whether that FIS action emits a *rebalance recommendation* in addition to the interruption notice. Verification step 9 assumes it does; if not, Capacity Rebalance still belongs in the stack but cannot be demonstrated through FIS and the runbook should say so.
-- `stress-ng` availability in the AL2023 repos.
-- Whether `t4g` and `c6g` are both offered in `ap-southeast-3`.
+| Item | Result |
+| --- | --- |
+| FIS action ID, target key, parameter name, filter, selection mode | Confirmed; recorded verbatim in §12 |
+| Does the FIS action emit a rebalance recommendation? | **Yes** — immediately on action start. Capacity Rebalance is demonstrable; verification step 9 stands |
+| `stress-ng` in AL2023 default repos | **Yes** — `dnf install stress-ng`, no EPEL/SPAL needed. The container fallback was removed from §1 |
+| `t4g.micro`, `t4g.small`, `c6g.medium`, `c6g.large` offered in the target Region | **Yes**, all four, in all three `ap-southeast-1` AZs (`describe-instance-type-offerings`) |
+| FIS available in `ap-southeast-3` | **No** — the reason the Region changed. See the note at the top |
+| FIS managed policy | `AWSFaultInjectionSimulatorEC2Access` covers the action's permissions; adopted in §4 |
 
-The first three are also flagged in the risks table.
+One item remains open and can only be settled by running it: the exact observed gap between the rebalance recommendation and the interruption notice at `durationBeforeInterruption = PT5M`. Confirm during rehearsal (§12).
