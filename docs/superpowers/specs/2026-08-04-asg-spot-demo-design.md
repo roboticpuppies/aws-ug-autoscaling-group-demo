@@ -190,11 +190,15 @@ Reference: [Auto Scaling groups with multiple instance types and purchase option
 | Hook | Transition | Heartbeat | Default result | Completed by |
 | --- | --- | --- | --- | --- |
 | Launch | `autoscaling:EC2_INSTANCE_LAUNCHING` | 300s | `ABANDON` | the instance itself, from user-data |
-| Terminate | `autoscaling:EC2_INSTANCE_TERMINATING` | 900s | `CONTINUE` | nobody — it times out |
+| Terminate | `autoscaling:EC2_INSTANCE_TERMINATING` | 60s | `CONTINUE` | nobody — it times out |
 
 The launch hook's `ABANDON` default is the safe failure mode: an instance whose bootstrap never finishes gets replaced rather than joining the ALB half-built.
 
-The terminate hook deliberately does nothing but hold the instance in `Terminating:Wait` for up to 900s, then proceed on timeout. This is the mechanism-demonstration route, chosen on purpose: it shows the hook exists and holds, with no extra moving parts to fail on stage. `docs/lifecycle-hooks.md` documents the cleaner production alternative (EventBridge rule on the terminate lifecycle event → Lambda → deregister from target group, wait for drain → `complete-lifecycle-action`) and explains why an external trigger is required there — a terminating instance, especially a reclaimed Spot instance, cannot be relied on to complete its own hook.
+The terminate hook deliberately does nothing but hold the instance in `Terminating:Wait` for 60s, then proceed on timeout. This is the mechanism-demonstration route, chosen on purpose: it shows the hook exists and holds, with no extra moving parts to fail on stage.
+
+**Why 60s is enough, and not arbitrary.** The hook fires before the instance is terminated, and the ALB begins deregistering it at the same time. With the target group's `deregistration_delay = 30` (§10), draining finishes well inside the 60s hold — so by the time the hook releases, in-flight requests have already completed. The plain wait is therefore not merely a demonstration of the mechanism; at these numbers it *is* a graceful drain, achieved by arithmetic rather than by a Lambda. Keep the hook's heartbeat comfortably above the deregistration delay: if someone later raises `deregistration_delay` past 60s without raising this, connections start getting cut.
+
+60s also keeps the demo watchable. A longer hold (the earlier draft used 900s) would strand an instance in `Terminating:Wait` for a quarter of an hour, long past the point the audience has moved on. `docs/lifecycle-hooks.md` documents the cleaner production alternative (EventBridge rule on the terminate lifecycle event → Lambda → deregister from target group, wait for drain → `complete-lifecycle-action`) and explains why an external trigger is required there — a terminating instance, especially a reclaimed Spot instance, cannot be relied on to complete its own hook.
 
 ### 9. Scaling policy
 
@@ -206,7 +210,7 @@ Target tracking on `ASGAverageCPUUtilization`, target **10%**.
 
 - ALB across the three public subnets, `alb_sg`.
 - Target group: HTTP 80, health check path `/`, healthy threshold 2, interval 15s, timeout 5s.
-- `deregistration_delay = 30` — keeps drain visibly quick during the demo.
+- `deregistration_delay = 30` — keeps drain visibly quick during the demo, and sits deliberately below the terminate hook's 60s hold (§8) so draining always completes before termination proceeds. These two numbers are coupled; change one and check the other.
 - Listener on 80, forwarding to the target group.
 
 ### 11. Instance Refresh
@@ -366,7 +370,7 @@ No application tests. Verification is static checks plus one full rehearsal.
 4. Instances spread across AZs.
 5. Launch hooks complete as `CONTINUE` — ASG activity history shows no `ABANDON`, and instances reach `InService` promptly rather than after a 300s timeout.
 6. CPU load triggers scale-out toward max 5.
-7. Terminate hook visibly holds an instance in `Terminating:Wait`.
+7. Terminate hook visibly holds an instance in `Terminating:Wait` for roughly 60s, and `make poll` shows no failed requests while it drains.
 8. FIS interrupts one Spot instance; a replacement launches; `HealthyHostCount` never reaches 0 and the ALB keeps serving.
 9. Capacity Rebalance is active on the ASG (`describe-auto-scaling-groups` shows `CapacityRebalance: true`), and the FIS run shows a replacement launching off the rebalance signal rather than only after the reclaim.
 10. Every instance carries a `Name` tag matching `<asg-name>-<5 chars>`, set by itself, and no instance is left with the ASG-propagated name or no name at all. The served page shows the same value.

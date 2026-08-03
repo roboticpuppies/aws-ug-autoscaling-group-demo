@@ -107,8 +107,8 @@ Spot capacity is requested across four instance types using the `capacity-optimi
 
 1. The instance immediately receives a **rebalance recommendation**. Capacity Rebalance reacts and the ASG starts a replacement.
 2. A **two-minute interruption notice** follows.
-3. The instance enters `Terminating:Wait`, where the **terminate lifecycle hook** holds it.
-4. It is removed from the ALB target group and drains; the replacement is already in service.
+3. The instance enters `Terminating:Wait`, where the **terminate lifecycle hook** holds it for 60 seconds.
+4. It is removed from the ALB target group and drains — the 30-second deregistration delay finishes comfortably inside that 60-second hold, so in-flight requests complete rather than being cut. The replacement is already in service.
 5. The site keeps answering throughout — watch `make poll` while this happens.
 
 A CloudWatch alarm acts as a stop condition: if healthy hosts ever drop below 1, the experiment aborts rather than making things worse.
