@@ -89,7 +89,13 @@ Self-naming needs `ec2:CreateTags`, which the instance role grants — but narro
 
 ### Scaling on load
 
-A target-tracking policy keeps average CPU at **10%**. That number is absurdly low on purpose — it makes scale-out happen within a couple of minutes so it fits inside a talk. Do not copy it into production.
+A target-tracking policy keeps average CPU at **10%**. That looks absurdly low until you notice it is exactly the `t4g.micro` **baseline**: the instance earns 12 CPU credits an hour across 2 vCPUs, so 12 ÷ 2 ÷ 60 = 10% is the utilization at which credits earned equals credits spent.
+
+Targeting the baseline means the group adds capacity *before* any instance starts drawing down its credit balance. That keeps the CPU metric linear and honest — which matters, because a burstable instance that runs out of credits in `standard` mode gets throttled to its baseline, and a metric pinned flat at 10% would quietly lie to the very policy reading it.
+
+The instances therefore run in `unlimited` credit mode (the T4g default, pinned explicitly), where bursting is never throttled. Together: `unlimited` guarantees the signal stays truthful, and the 10% target keeps average utilization at or below baseline so surplus credits are rarely needed.
+
+A side effect worth knowing: `c6g` instances are fixed-performance and have no baseline at all, so on those the 10% target simply means scaling out early. The number is calibrated to the burstable members of the fleet.
 
 `make stress` runs `stress-ng` on every instance via SSM. CPU climbs, the policy adds instances toward the maximum of 5. `make unstress` releases the load and scale-in follows.
 

@@ -123,6 +123,7 @@ Reference: [Session Manager prerequisites / instance permissions](https://docs.a
 - IMDSv2 required (`http_tokens = "required"`).
 - Instance profile and `instance_sg` attached.
 - Default `instance_type = t4g.micro` — overridden per-type by the mixed instances policy, but set so the template is valid standalone.
+- `credit_specification { cpu_credits = "unlimited" }` — matches the T4g default, but pinned deliberately. See §9 for why `standard` would break bootstrap. Harmless on the non-burstable `c6g` overrides, which ignore it.
 - `user_data` = base64 of the rendered bootstrap script.
 - Tag specifications: `Project=Demo`. No `Name` — instances set their own (§6).
 - `key_name` attached only when the optional variable is set (§13); unset by default.
@@ -204,7 +205,21 @@ The terminate hook deliberately does nothing but hold the instance in `Terminati
 
 Target tracking on `ASGAverageCPUUtilization`, target **10%**.
 
-10% is intentionally far below any real-world setting. It makes scale-out fire within a couple of minutes of applying load, which is what a live audience needs to see. The trade-off is that idle and boot-time CPU noise can trigger scale-out unprompted — so rehearse the timing, and be ready to explain the number as a demo artifact rather than a recommendation.
+**10% is the t4g.micro baseline, and that is the whole point.** It is not an arbitrarily low demo number. `t4g.micro` earns 12 CPU credits per hour across 2 vCPUs, giving a baseline utilization of 12 ÷ 2 ÷ 60 = **10%** — the level at which credits earned exactly matches credits spent. CloudWatch's `CPUUtilization` is measured per instance, not per core, and the baseline specification uses the same basis, so the two are directly comparable: a 10% target sits precisely on the break-even line.
+
+Setting the target there means the group scales out *before* instances need to draw down credit balance at all. Capacity is added while every instance is still running at or under baseline, so the CPU signal driving the policy stays linear and trustworthy rather than being distorted by credit exhaustion.
+
+**Credit mode: `unlimited`, set explicitly.** This matters enough to pin rather than inherit:
+
+- `T4g` **defaults to `unlimited`**, in which an instance bursts above baseline for as long as it likes and AWS bills [surplus credits](https://aws.amazon.com/ec2/pricing/on-demand/#T2.2FT3.2FT4g_Unlimited_Mode_Pricing) at a flat per-vCPU-hour rate. No throttling ever occurs. Under `standard` mode, by contrast, an instance that depletes its credits *is* throttled to baseline — which would flatten `CPUUtilization` at 10% and make the metric lie to the scaling policy.
+- **Do not "optimize" this to `standard`.** Launch credits are a **T2-only** feature; a `standard`-mode `t4g` starts with zero accrued credits and is throttled to baseline from the moment it boots. `docker pull` plus container start would then crawl, risk exceeding the launch hook's 300s heartbeat, and get the instance `ABANDON`ed — producing continuous launch-and-replace churn that looks like a broken stack. AWS [recommends `unlimited` specifically for ASG-launched T instances](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances-how-to.html) for this reason.
+- Declaring it in the launch template also puts it on screen during the talk, where the burstable-credit point is worth making out loud.
+
+So the two settings do different jobs: `unlimited` guarantees the metric never lies, and the 10% target keeps average utilization at or below baseline so surplus credits are rarely needed and the demo stays cheap.
+
+**Known trade-off with the mixed fleet.** `c6g.medium` and `c6g.large` are fixed-performance instances — no credits, no baseline. The 10% target is calibrated to the burstable members of the fleet, so on a `c6g` instance it simply means scaling out early and over-provisioning slightly. That is an accepted cost of calibrating to the weakest member, not an oversight.
+
+**Demo consequence to rehearse:** because the target sits at baseline, ordinary idle and boot-time CPU can nudge the group into scaling out unprompted. Rehearse the timing so it does not fire mid-sentence.
 
 ### 10. ALB
 
@@ -384,7 +399,8 @@ No application tests. Verification is static checks plus one full rehearsal.
 
 | Risk | Mitigation |
 | --- | --- |
-| 10% CPU target scales out from idle noise, mid-sentence | Rehearse; be ready to explain it as a deliberate demo setting |
+| 10% CPU target scales out from idle noise, mid-sentence | Rehearse; explain it as the deliberate t4g.micro baseline calibration (§9), not a low number picked for effect |
+| Someone switches credit mode to `standard` as a cost "optimization" | §9 documents why this throttles from boot and causes launch-hook churn. `unlimited` is pinned explicitly in the launch template rather than inherited |
 | Spot capacity shortfall at demo time | Four instance types, all confirmed offered in all three `ap-southeast-1` AZs, plus best-effort AZ spread |
 | `availability_zone_distribution` is a recent ASG feature | Pin a recent AWS provider version in `versions.tf` (`~> 6.0`) |
 | FIS action requires a genuinely Spot instance | Desired 3 with On-Demand base 1 guarantees 2 Spot instances |
