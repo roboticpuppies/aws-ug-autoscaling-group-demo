@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+#
+# Instance bootstrap for the AWS UG Auto Scaling / Spot demo.
+#
+# Rendered by Terraform's templatefile(). Terraform consumes dollar-brace
+# interpolations, so every SHELL variable below is written $VAR with no braces.
+# The only dollar-brace expressions in this file are the three Terraform
+# variables: asg_name, launch_hook_name, region. Note that even a COMMENT
+# containing a dollar-brace sequence is interpolated and will fail the render,
+# which is why this paragraph spells it out in words.
+#
+# Keeping braces out of shell variables also leaves this file valid Bash, so
+# static checks run on it as-is.
+#
+# shellcheck disable=SC2154  # asg_name/launch_hook_name/region come from Terraform.
+set -euo pipefail
+
+exec > >(tee -a /var/log/user-data.log) 2>&1
+
+ASG_NAME="${asg_name}"
+LAUNCH_HOOK_NAME="${launch_hook_name}"
+export AWS_DEFAULT_REGION="${region}"
+
+# Set before the ERR trap is installed so on_failure can test it safely under
+# `set -u` even if we die before reading instance metadata.
+INSTANCE_ID=""
+
+log() {
+  echo "[user-data $(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"
+}
+
+notify_failure() {
+  local failed_line="$1"
+
+  # INTENTIONALLY NOT IMPLEMENTED. This is a demo; the comment is the point.
+  #
+  # In a real deployment this is where a failed bootstrap becomes someone's
+  # problem instead of a silent instance replacement. It would POST to a Slack
+  # (or equivalent) incoming webhook with enough context to triage without
+  # opening a shell anywhere:
+  #
+  #   - instance ID, the self-assigned Name tag, AZ, instance type
+  #   - whether this was a Spot or an On-Demand instance
+  #   - the line number that failed
+  #   - the last ~50 lines of /var/log/user-data.log
+  #
+  # The webhook URL MUST NOT be hardcoded here, and MUST NOT be passed in as a
+  # Terraform variable rendered into user-data. User-data is readable through
+  # the instance metadata service by any process or user on this instance, and
+  # is visible to anyone holding ec2:DescribeLaunchTemplateVersions. A webhook
+  # URL is a credential: whoever holds it can post into the channel. Fetch it
+  # at runtime from Secrets Manager or SSM Parameter Store using the instance
+  # role, which also gets you rotation and an audit trail.
+  log "notify_failure: stub only, nothing sent (line $failed_line)"
+}
+
+on_failure() {
+  local failed_line="$1"
+
+  # Drop the trap first so a failure inside this handler cannot recurse.
+  trap - ERR
+
+  log "FAILED at line $failed_line -- abandoning this instance"
+
+  # ABANDON first: it is the time-sensitive part. Notification is best effort,
+  # and a hanging webhook must never delay the ASG replacing a dead instance.
+  if [ -n "$INSTANCE_ID" ]; then
+    aws autoscaling complete-lifecycle-action \
+      --lifecycle-hook-name "$LAUNCH_HOOK_NAME" \
+      --auto-scaling-group-name "$ASG_NAME" \
+      --instance-id "$INSTANCE_ID" \
+      --lifecycle-action-result ABANDON \
+      || log "WARN: could not complete lifecycle action; the hook will time out to ABANDON"
+  else
+    log "WARN: no instance ID yet; leaving the hook to time out to ABANDON"
+  fi
+
+  notify_failure "$failed_line"
+  exit 1
+}
+
+trap 'on_failure $LINENO' ERR
+
+# --- Identity ----------------------------------------------------------------
+
+log "reading instance metadata (IMDSv2)"
+TOKEN="$(curl -sf -X PUT http://169.254.169.254/latest/api/token \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')"
+
+imds() {
+  curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" \
+    "http://169.254.169.254/latest/meta-data/$1"
+}
+
+INSTANCE_ID="$(imds instance-id)"
+AZ="$(imds placement/availability-zone)"
+INSTANCE_TYPE="$(imds instance-type)"
+
+# instance-life-cycle returns "spot" or "on-demand".
+LIFECYCLE="$(imds instance-life-cycle)"
+
+# Last 5 characters of the instance ID, Kubernetes-pod style. printf avoids the
+# trailing newline that echo would add, so tail counts real characters.
+SUFFIX="$(printf '%s' "$INSTANCE_ID" | tail -c 5)"
+INSTANCE_NAME="$ASG_NAME-$SUFFIX"
+
+log "this instance is $INSTANCE_NAME ($INSTANCE_TYPE, $LIFECYCLE, $AZ)"
+
+# --- Self-naming -------------------------------------------------------------
+
+# Cosmetic, and deliberately non-fatal: `|| log` keeps a failure here from
+# tripping the ERR trap and abandoning an otherwise healthy instance. Only nginx
+# failing to answer is worth abandoning over.
+log "tagging self as $INSTANCE_NAME"
+aws ec2 create-tags \
+  --resources "$INSTANCE_ID" \
+  --tags Key=Name,Value="$INSTANCE_NAME" \
+  || log "WARN: self-tagging failed, continuing -- the Name tag is cosmetic"
+
+# --- Content -----------------------------------------------------------------
+
+log "writing the document root"
+mkdir -p /opt/demo/html
+
+# One machine-readable line, curled by `make poll`. Keep this format stable.
+printf '%s %s %s\n' "$INSTANCE_NAME" "$LIFECYCLE" "$AZ" > /opt/demo/html/name.txt
+
+cat > /opt/demo/html/index.html <<HTML
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>$INSTANCE_NAME</title></head>
+<body style="font-family: system-ui, sans-serif; font-size: 1.5rem; padding: 2rem">
+  <h1>$INSTANCE_NAME</h1>
+  <p>instance-id: $INSTANCE_ID</p>
+  <p>instance-type: $INSTANCE_TYPE</p>
+  <p>availability-zone: $AZ</p>
+  <p>purchase-option: <strong>$LIFECYCLE</strong></p>
+</body>
+</html>
+HTML
+
+# --- Web server --------------------------------------------------------------
+
+# Cache hit: the AMI already carries this image, so scale-out is fast on stage.
+log "starting nginx"
+docker pull nginx:alpine
+docker run -d --name web -p 80:80 \
+  -v /opt/demo/html:/usr/share/nginx/html:ro \
+  nginx:alpine
+
+log "waiting for nginx to answer on port 80"
+for attempt in $(seq 1 30); do
+  if curl -fs -o /dev/null http://localhost:80/; then
+    log "nginx is answering after $attempt attempt(s)"
+    break
+  fi
+
+  if [ "$attempt" -eq 30 ]; then
+    log "nginx did not answer after 30 attempts"
+    # Trips the ERR trap, which ABANDONs this instance.
+    false
+  fi
+
+  sleep 2
+done
+
+# --- Release the launch hook -------------------------------------------------
+
+# The whole point of the launch hook: this instance joins the load balancer
+# because the APPLICATION is ready, not because EC2 finished booting.
+log "releasing the launch lifecycle hook"
+aws autoscaling complete-lifecycle-action \
+  --lifecycle-hook-name "$LAUNCH_HOOK_NAME" \
+  --auto-scaling-group-name "$ASG_NAME" \
+  --instance-id "$INSTANCE_ID" \
+  --lifecycle-action-result CONTINUE
+
+log "bootstrap complete"
