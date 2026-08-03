@@ -1,0 +1,33 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+tfplan
+*.tfplan
+
+# Packer
+packer_cache/
+*.box
+manifest.json
+
+# Key material — never commit. See docs/superpowers/specs §13.
+*.pem
+*.ppk
+*.key
+id_rsa*
+id_ed25519*
+*.p12
+*.pfx
+
+# Local
+.DS_Store
+*.log
