@@ -81,7 +81,9 @@ Left out on purpose, to keep the stack legible and cheap:
 6. User-data polls its own port 80 until nginx answers, then calls `complete-lifecycle-action` to release the hook.
 7. The instance goes `InService`, passes ALB health checks, and starts taking traffic.
 
-The point: an instance joins the load balancer when the *application* is ready, not when the *EC2 instance* has booted. If bootstrap fails, the hook times out as `ABANDON` and the instance is replaced instead of joining half-built.
+The point: an instance joins the load balancer when the *application* is ready, not when the *EC2 instance* has booted. If bootstrap fails, a failure handler in the script completes the hook as `ABANDON` straight away and the instance is replaced, rather than joining half-built or sitting idle until the hook times out.
+
+That handler also calls a `notify_failure` function whose body is **only a comment** in this repo. It marks where operational alerting — a Slack webhook, say — belongs in a bootstrap script, and notes that the webhook URL would have to come from Secrets Manager or Parameter Store at runtime, never inlined in user-data. A demo does not need a Slack dependency; it does benefit from showing where the seam is.
 
 Self-naming needs `ec2:CreateTags`, which the instance role grants — but narrowly. It is restricted to writing only the `Name` key, and only onto instances already tagged `Project=Demo`, so an instance cannot rename anything else in the account or edit any other tag.
 

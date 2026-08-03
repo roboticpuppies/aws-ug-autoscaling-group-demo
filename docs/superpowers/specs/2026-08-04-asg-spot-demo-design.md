@@ -139,9 +139,24 @@ Rendered from `terraform/templates/user-data.sh.tftpl`. Logs everything to `/var
 4. `docker pull nginx:alpine` (cache hit from the AMI), then `docker run -d --name web -p 80:80 -v /opt/demo/html:/usr/share/nginx/html:ro nginx:alpine`.
 5. Poll `curl -fs localhost:80` until it returns 200, with a bounded retry count.
 6. On success: `aws autoscaling complete-lifecycle-action --lifecycle-action-result CONTINUE` for the launch hook, passing the instance ID, hook name, and ASG name (hook and ASG names injected by Terraform at render time).
-7. On failure of nginx: complete with `ABANDON` so a broken instance is replaced promptly instead of waiting out the heartbeat timeout.
+7. On any failure: the `on_failure` handler completes with `ABANDON`, so a broken instance is replaced promptly instead of waiting out the heartbeat timeout.
 
 This is the point of the launch hook: the instance is not `InService` and takes no ALB traffic until nginx is actually answering. Not merely "EC2 booted".
+
+**Failure handling.** The script runs under `set -euo pipefail` with `trap 'on_failure $LINENO' ERR`, so any unhandled command failure routes through a single `on_failure` handler rather than dying silently halfway through bootstrap.
+
+`on_failure` does two things, in this order:
+
+1. `trap - ERR` immediately, so a failure inside the handler cannot recurse.
+2. Call `complete-lifecycle-action` with `ABANDON`, then invoke the notification hook below. **`ABANDON` goes first, deliberately** — it is the time-sensitive part. Notification is best-effort, and a hanging webhook call must not delay the ASG replacing a dead instance.
+
+**Notification hook — a documented stub, not an implementation.** `on_failure` calls a `notify_failure` function whose body in this repo is *only a comment*. The comment explains what it would do in a real deployment and is part of the deliverable — the point is to show where operational alerting belongs in a bootstrap script, without adding a Slack dependency to a demo. The comment must cover:
+
+- What it would send: instance ID, self-assigned `Name`, AZ, instance type, Spot vs On-Demand, the failing line number, and the tail of `/var/log/user-data.log`.
+- Where it would send it: an incoming webhook (Slack or equivalent).
+- **Where the webhook URL must come from: Secrets Manager or SSM Parameter Store, fetched at runtime — never hardcoded in user-data.** User-data is readable through the instance metadata service by any process or user on the instance, and is visible in the launch template to anyone with `ec2:DescribeLaunchTemplateVersions`. A webhook URL is a credential: anyone holding it can post into the channel. This is the single most important line in the comment, because inlining the URL is the obvious-looking shortcut and it leaks the secret two different ways.
+
+**Guard the non-fatal calls.** Because `set -e` plus the `ERR` trap makes *any* failure fatal by default, the deliberately non-fatal steps must be explicit about it — `aws ec2 create-tags ... || log "WARN: self-tagging failed"`. Without that guard a failed cosmetic tag would trip the trap and abandon a perfectly healthy instance, which is precisely the behavior ruled out above.
 
 **On the self-naming step.** The pattern deliberately echoes Kubernetes pod names — `asg-demo-4f7a2` — so instances are identifiable at a glance in the console, in `make status`, and on the served page, instead of appearing as a wall of identical blank-named rows.
 
@@ -355,10 +370,11 @@ No application tests. Verification is static checks plus one full rehearsal.
 8. FIS interrupts one Spot instance; a replacement launches; `HealthyHostCount` never reaches 0 and the ALB keeps serving.
 9. Capacity Rebalance is active on the ASG (`describe-auto-scaling-groups` shows `CapacityRebalance: true`), and the FIS run shows a replacement launching off the rebalance signal rather than only after the reclaim.
 10. Every instance carries a `Name` tag matching `<asg-name>-<5 chars>`, set by itself, and no instance is left with the ASG-propagated name or no name at all. The served page shows the same value.
-11. Removing the `ec2:CreateTags` permission makes self-naming fail *without* failing the bootstrap — instances still reach `InService`. Confirms the tag is genuinely non-fatal (§6). Worth checking once, since the failure mode is silent by design.
-12. `git grep` finds no key material, and no port-22 rule exists with the default variable values.
-13. Every `make` target in §14 runs against the live stack without error, and each demo driver prints what it claims to.
-14. `make destroy` followed by `make clean-ami` leaves nothing behind — including the AMI and its snapshot, which Terraform does not own.
+11. Removing the `ec2:CreateTags` permission makes self-naming fail *without* failing the bootstrap — instances still reach `InService`. Confirms the tag is genuinely non-fatal and that the `ERR` trap is correctly guarded (§6). Worth checking once, since the failure mode is silent by design.
+12. Breaking the bootstrap on purpose (for example, pointing at a nonexistent image tag) makes `on_failure` fire: the ASG activity history shows an `ABANDON` result promptly rather than after the 300s heartbeat timeout, and `/var/log/user-data.log` records the failing line.
+13. `git grep` finds no key material and no hardcoded webhook URL, and no port-22 rule exists with the default variable values.
+14. Every `make` target in §14 runs against the live stack without error, and each demo driver prints what it claims to.
+15. `make destroy` followed by `make clean-ami` leaves nothing behind — including the AMI and its snapshot, which Terraform does not own.
 
 ## Risks and open verifications
 
