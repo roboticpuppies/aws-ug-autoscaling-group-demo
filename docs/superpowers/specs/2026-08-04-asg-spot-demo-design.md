@@ -121,7 +121,7 @@ This is the point of the launch hook: the instance is not `InService` and takes 
 - Name set explicitly (needed by the IAM policy ARN and by FIS targeting).
 - `vpc_zone_identifier` = all three subnets.
 - **Capacity:** min 1, desired 3, max 5. Desired 3 means 1 On-Demand + 2 Spot, so FIS always has a Spot instance to interrupt and the ASG still shows healthy capacity afterwards.
-- **Health check:** type `ELB`, grace period 300s. One field covers both — `ELB` includes EC2 status checks; there is no separate EC2 toggle. 300s matches the launch hook heartbeat and leaves room for boot plus container start before health checks can mark an instance unhealthy.
+- **Health check:** type `ELB`, grace period 300s. One field covers both — `ELB` includes EC2 status checks; there is no separate EC2 toggle. Note the grace period only starts once an instance reaches `InService`, which the launch hook already gates on nginx answering — so it is headroom against a container dying immediately after bootstrap, not cover for boot time. 300s is generous on purpose; it costs nothing in a demo.
 - **Mixed instances policy:**
   - Overrides, in priority order: `t4g.micro`, `t4g.small`, `c6g.medium`, `c6g.large`. All arm64, matching the AMI.
   - `on_demand_base_capacity = 1`
@@ -293,4 +293,11 @@ Provider behavior below was confirmed against the Terraform AWS provider source 
 - [Instance metadata (IMDSv2)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html)
 - [Packer Amazon EBS builder](https://developer.hashicorp.com/packer/integrations/hashicorp/amazon/latest/components/builder/ebs)
 
-**Pending verification pass:** the AWS Documentation MCP server was connected mid-design but requires a session restart to become available. Before implementation, re-check against it: exact FIS action parameter and target-key names, `stress-ng` availability in the AL2023 repos, and whether `t4g` and `c6g` are both offered in `ap-southeast-3`. Each is flagged in the risks table.
+**Pending verification pass:** the AWS Documentation MCP server was connected mid-design but requires a session restart to become available. Before implementation, re-check against it:
+
+- Exact FIS action parameter and target-key names for `aws:ec2:send-spot-instance-interruptions`.
+- Whether that FIS action emits a *rebalance recommendation* in addition to the interruption notice. Verification step 9 assumes it does; if not, Capacity Rebalance still belongs in the stack but cannot be demonstrated through FIS and the runbook should say so.
+- `stress-ng` availability in the AL2023 repos.
+- Whether `t4g` and `c6g` are both offered in `ap-southeast-3`.
+
+The first three are also flagged in the risks table.
