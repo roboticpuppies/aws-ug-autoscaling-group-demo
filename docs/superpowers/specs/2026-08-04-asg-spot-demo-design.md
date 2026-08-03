@@ -311,6 +311,10 @@ Everything lives in `docs/`, per requirement. **Every doc links out to the offic
 - **`fis.md`** — triggering and interpreting the Spot interruption experiment.
 - **`instance-refresh.md`** — the documented-but-unwired replacement path.
 
+The root **`README.md`** is separate from all of these: it is written for the *talk's audience*, not for an implementer. It covers what the repo is, how the mechanisms work in prose, the architecture diagram, goals and non-goals, and the `make` commands needed to run the demo — and it links into `docs/` for depth. It is already written and committed, describing the target state ahead of the code.
+
+**Task for the implementing agent:** `README.md` currently opens with a *"Status: not yet implemented"* note. Remove that block as the final step, once `make apply` actually works. Leaving it in would tell readers the repo is broken; removing it early would claim the code exists before it does.
+
 ## Verification
 
 No application tests. Verification is static checks plus one full rehearsal.
