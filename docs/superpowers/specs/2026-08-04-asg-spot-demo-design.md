@@ -6,6 +6,20 @@ Design doc for the live demo supporting the talk *"Auto-Scaling & Spot Instance:
 - **Region:** `ap-southeast-3` (Jakarta)
 - **IaC:** Terraform (infrastructure) + Packer (AMI)
 
+## Status
+
+Design approved in outline; this document is written and committed. **Not yet implemented — no Terraform or Packer code exists.**
+
+Next steps, in order:
+
+1. Run the AWS documentation verification pass on the four items listed under [References](#references), and fold any corrections into this document.
+2. Write the implementation plan.
+3. Hand off to the implementing agent.
+
+**Who does what.** This spec and the implementation plan are authored by Claude; the code is written by a *different* AI agent that will not have seen the design conversation. Everything an implementer needs must therefore be explicit here or in the plan — file paths, resource names, and acceptance criteria that can be checked objectively. Claude reviews the resulting code against this spec afterwards.
+
+**Human-gated commands.** No agent runs `terraform apply`, `terraform destroy`, or `packer build`. Those create real, billable AWS resources. Agents are limited to `terraform fmt`, `terraform validate`, and `packer validate`. The rehearsal under [Verification](#verification) is the author's own step, so a review can confirm spec conformance and static correctness but never runtime behavior.
+
 ## Goal
 
 A self-contained, destroy-after-talk stack that demonstrates, live on stage:
