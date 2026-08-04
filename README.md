@@ -79,6 +79,33 @@ Left out on purpose, to keep the stack legible and cheap:
 6. User-data polls its own port 80 until nginx answers, then calls `complete-lifecycle-action` to release the hook.
 7. The instance goes `InService`, passes ALB health checks, and starts taking traffic.
 
+```mermaid
+sequenceDiagram
+    participant ASG as Auto Scaling group
+    participant EC2 as New instance (user-data)
+    participant TG as ALB target group
+
+    ASG->>EC2: Launch from the Packer AMI
+    Note over ASG,EC2: Launch hook holds it in Pending:Wait<br/>heartbeat 300s, default result ABANDON
+    EC2->>EC2: Read own ID, AZ, type, Spot or On-Demand from IMDSv2
+    EC2->>EC2: Tag self Name = asg-demo-4f7a2
+    EC2->>EC2: Write name.txt, start nginx in Docker
+    loop every 2s until it answers
+        EC2->>EC2: curl -fs http://localhost:80/
+    end
+    alt nginx answers
+        EC2->>ASG: complete-lifecycle-action CONTINUE
+        ASG->>TG: Register target, instance goes InService
+        TG->>EC2: GET / every 15s
+        EC2-->>TG: 200
+        Note over EC2,TG: 2 consecutive passes, so healthy after ~30s
+        TG->>EC2: Live traffic
+    else bootstrap fails
+        EC2->>ASG: complete-lifecycle-action ABANDON
+        ASG->>EC2: Terminate and replace, never joins the target group
+    end
+```
+
 The point: an instance joins the load balancer when the *application* is ready, not when the *EC2 instance* has booted. If bootstrap fails, a failure handler in the script completes the hook as `ABANDON` straight away and the instance is replaced, rather than joining half-built or sitting idle until the hook times out.
 
 That handler also calls a `notify_failure` function whose body is **only a comment** in this repo. It marks where operational alerting — a Slack webhook, say — belongs in a bootstrap script, and notes that the webhook URL would have to come from Secrets Manager or Parameter Store at runtime, never inlined in user-data. A demo does not need a Slack dependency; it does benefit from showing where the seam is.
@@ -99,11 +126,37 @@ A side effect worth knowing: `c6g` instances are fixed-performance and have no b
 
 `make stress` runs `stress-ng` on every instance via SSM. CPU climbs, the policy adds instances toward the maximum of 5. `make unstress` releases the load and scale-in follows.
 
+```mermaid
+flowchart LR
+    S["make stress<br/>SSM Run Command,<br/>targets tag Project=Demo"] --> F
+    U["make unstress<br/>pkill stress-ng"] --> F
+    F["Fleet of instances"] --> M["CloudWatch<br/>ASGAverageCPUUtilization"]
+    M --> D{"Average CPU<br/>vs 10% target"}
+    D -->|above| O["ASG adds capacity,<br/>up to max 5"]
+    D -->|below| I["ASG removes capacity,<br/>down to min 1"]
+    O -->|"load spreads thinner,<br/>average CPU falls"| F
+    I --> F
+```
+
 ### Cheap but available
 
 The mixed instances policy sets **On-Demand base capacity = 1** and puts **100% of everything above that on Spot**. At the default desired capacity of 3, that is 1 On-Demand + 2 Spot.
 
 Spot capacity is requested across four instance types using the `capacity-optimized-prioritized` strategy: it respects the type priority order where it can, while preferring the deepest capacity pools — the pools least likely to be reclaimed. Instances are spread across three AZs on a best-effort basis, so no single AZ running out of Spot capacity can block a launch.
+
+```mermaid
+flowchart TB
+    D["Desired capacity 3"] --> OD["1 On-Demand<br/>the floor that is never reclaimed"]
+    D --> SP["2 Spot<br/>100% of everything above the floor"]
+    OD --> ODP["on_demand_allocation_strategy<br/>prioritized"]
+    SP --> SPP["spot_allocation_strategy<br/>capacity-optimized-prioritized<br/>deepest pools first, priority<br/>respected where it can be"]
+    subgraph types["Override list, in priority order"]
+        direction LR
+        T1["t4g.micro"] --- T2["t4g.small"] --- T3["c6g.medium"] --- T4["c6g.large"]
+    end
+    ODP --> types
+    SPP --> types
+```
 
 **Capacity Rebalance** is enabled. EC2 emits a *rebalance recommendation* when a Spot instance is at elevated risk of being reclaimed — earlier than the well-known two-minute warning. With Capacity Rebalance on, the ASG launches a replacement on that earlier signal, so the replacement is often already serving before the doomed instance goes away.
 
@@ -116,6 +169,29 @@ Spot capacity is requested across four instance types using the `capacity-optimi
 3. The instance enters `Terminating:Wait`, where the **terminate lifecycle hook** holds it for 60 seconds.
 4. It is removed from the ALB target group and drains — the 30-second deregistration delay finishes comfortably inside that 60-second hold, so in-flight requests complete rather than being cut. The replacement is already in service.
 5. The site keeps answering throughout — watch `make poll` while this happens.
+
+```mermaid
+sequenceDiagram
+    participant Spot as EC2 Spot service
+    participant ASG as Auto Scaling group
+    participant Old as Doomed Spot instance
+    participant New as Replacement instance
+    participant TG as ALB target group
+
+    Note over Spot: make interrupt starts the FIS experiment<br/>durationBeforeInterruption PT5M
+    Spot->>Old: Rebalance recommendation, T+0
+    Spot->>ASG: Rebalance recommendation, T+0
+    ASG->>New: Capacity Rebalance launches a replacement immediately
+    New->>TG: Clears its launch hook, passes health checks, InService
+    Spot->>Old: Two-minute interruption notice, T+3m
+    Spot->>ASG: Instance is terminating, T+5m
+    ASG->>Old: Terminating:Wait, terminate hook holds it 60s
+    ASG->>TG: Deregister target
+    TG->>Old: Drain in-flight requests, 30s deregistration delay
+    Note over Old,TG: The 30s drain finishes well inside the 60s hold
+    ASG->>Old: Hook times out to CONTINUE, instance terminates
+    Note over New,TG: Healthy targets never reach zero. A CloudWatch<br/>alarm aborts the experiment if they would.
+```
 
 A CloudWatch alarm acts as a stop condition: if healthy hosts ever drop below 1, the experiment aborts rather than making things worse.
 
