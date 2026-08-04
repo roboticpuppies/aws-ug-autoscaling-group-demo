@@ -129,7 +129,7 @@ Two deviations from the spec's illustrative layout, both deliberate: `locals.tf`
 - Consumes: nothing.
 - Produces: `var.region`, `var.name_prefix`, `var.vpc_cidr`, `var.subnet_cidrs`, `var.instance_types`, `var.min_size`, `var.desired_capacity`, `var.max_size`, `var.cpu_target`, `var.key_name`, `var.ssh_ingress_cidr`, `var.fis_duration_before_interruption`; `local.asg_name`, `local.launch_hook_name`, `local.terminate_hook_name`, `local.tags`. Every later task uses these exact names.
 
-- [ ] **Step 1: Write `terraform/versions.tf`**
+- [x] **Step 1: Write `terraform/versions.tf`**
 
 ```hcl
 terraform {
@@ -151,7 +151,7 @@ provider "aws" {
 }
 ```
 
-- [ ] **Step 2: Write `terraform/variables.tf`**
+- [x] **Step 2: Write `terraform/variables.tf`**
 
 ```hcl
 variable "region" {
@@ -227,7 +227,7 @@ variable "fis_duration_before_interruption" {
 }
 ```
 
-- [ ] **Step 3: Write `terraform/locals.tf`**
+- [x] **Step 3: Write `terraform/locals.tf`**
 
 ```hcl
 locals {
@@ -243,13 +243,13 @@ locals {
 }
 ```
 
-- [ ] **Step 4: Initialise providers (no AWS calls)**
+- [x] **Step 4: Initialise providers (no AWS calls)**
 
 Run: `terraform -chdir=terraform init -backend=false`
 
 Expected: ends with `Terraform has been successfully initialized!`. It downloads `hashicorp/aws` v6.x. If it tries to contact AWS or asks for credentials, stop — something is wrong with the config.
 
-- [ ] **Step 5: Validate and check formatting**
+- [x] **Step 5: Validate and check formatting**
 
 Run:
 ```bash
@@ -261,7 +261,7 @@ Expected: `fmt -check` prints nothing and exits 0. `validate` prints `Success! T
 
 If `fmt -check` lists files, run `terraform -chdir=terraform fmt -recursive` and re-check.
 
-- [ ] **Step 6: Confirm required values are present**
+- [x] **Step 6: Confirm required values are present**
 
 Run:
 ```bash
@@ -276,7 +276,7 @@ echo OK
 
 Expected: prints `OK`. Any failure means a Global Constraint value is missing.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add terraform/versions.tf terraform/variables.tf terraform/locals.tf
@@ -297,7 +297,7 @@ git commit -m "Add Terraform skeleton"
 
 The source AMI is selected with `source_ami_filter` rather than an SSM-parameter data source, deliberately: Packer evaluates HCL data sources during `packer validate`, which would require AWS credentials and break credential-free validation. `source_ami_filter` resolves at build time instead.
 
-- [ ] **Step 1: Write `packer/asg-demo.pkr.hcl`**
+- [x] **Step 1: Write `packer/asg-demo.pkr.hcl`**
 
 ```hcl
 packer {
@@ -368,7 +368,7 @@ build {
 }
 ```
 
-- [ ] **Step 2: Write `packer/scripts/provision.sh`**
+- [x] **Step 2: Write `packer/scripts/provision.sh`**
 
 ```bash
 #!/usr/bin/env bash
@@ -419,7 +419,7 @@ docker image inspect nginx:alpine >/dev/null
 log "done"
 ```
 
-- [ ] **Step 3: Check the provisioner script parses and lints clean**
+- [x] **Step 3: Check the provisioner script parses and lints clean**
 
 Run:
 ```bash
@@ -429,7 +429,7 @@ shellcheck packer/scripts/provision.sh
 
 Expected: both silent, exit 0.
 
-- [ ] **Step 4: Initialise the Packer plugin and validate**
+- [x] **Step 4: Initialise the Packer plugin and validate**
 
 Run:
 ```bash
@@ -440,7 +440,7 @@ Expected: `packer init` installs the amazon plugin; `packer validate` prints `Th
 
 If validate complains about credentials, a data source has crept in — remove it and use `source_ami_filter`.
 
-- [ ] **Step 5: Confirm required values are present**
+- [x] **Step 5: Confirm required values are present**
 
 Run:
 ```bash
@@ -456,7 +456,7 @@ echo OK
 
 Expected: prints `OK`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packer/
@@ -476,7 +476,7 @@ git commit -m "Add Packer template for the demo AMI"
 - Consumes: `var.vpc_cidr`, `var.subnet_cidrs`, `var.name_prefix`, `local.tags`.
 - Produces: `aws_vpc.main` (referenced by both security groups and the target group) and `aws_subnet.public` — a **list** of 3 subnets, referenced later as `aws_subnet.public[*].id`.
 
-- [ ] **Step 1: Write `terraform/vpc.tf`**
+- [x] **Step 1: Write `terraform/vpc.tf`**
 
 ```hcl
 data "aws_availability_zones" "available" {
@@ -530,7 +530,7 @@ resource "aws_route_table_association" "public" {
 }
 ```
 
-- [ ] **Step 2: Validate and check formatting**
+- [x] **Step 2: Validate and check formatting**
 
 Run:
 ```bash
@@ -540,7 +540,7 @@ terraform -chdir=terraform validate
 
 Expected: `fmt -check` silent; `validate` prints `Success! The configuration is valid.`
 
-- [ ] **Step 3: Confirm required values are present**
+- [x] **Step 3: Confirm required values are present**
 
 Run:
 ```bash
@@ -553,7 +553,7 @@ echo OK
 
 Expected: prints `OK`. The last check matters: a NAT gateway is an explicit non-goal and the single most expensive thing that could sneak into this stack.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add terraform/vpc.tf
@@ -573,7 +573,7 @@ git commit -m "Add demo VPC with three public subnets"
 
 Rules use the modern `aws_vpc_security_group_ingress_rule` / `..._egress_rule` resources rather than inline `ingress`/`egress` blocks — one rule per resource, so a plan diff names exactly which rule changed.
 
-- [ ] **Step 1: Write `terraform/security-groups.tf`**
+- [x] **Step 1: Write `terraform/security-groups.tf`**
 
 ```hcl
 resource "aws_security_group" "alb" {
@@ -646,7 +646,7 @@ resource "aws_vpc_security_group_egress_rule" "instance_all" {
 }
 ```
 
-- [ ] **Step 2: Validate and check formatting**
+- [x] **Step 2: Validate and check formatting**
 
 Run:
 ```bash
@@ -656,7 +656,7 @@ terraform -chdir=terraform validate
 
 Expected: `fmt -check` silent; `validate` prints `Success! The configuration is valid.`
 
-- [ ] **Step 3: Confirm the SSH rule is opt-in and instance HTTP is ALB-only**
+- [x] **Step 3: Confirm the SSH rule is opt-in and instance HTTP is ALB-only**
 
 Run:
 ```bash
@@ -668,7 +668,7 @@ echo OK
 
 Expected: prints `OK`. This proves port 22 appears exactly once and only inside the counted, default-disabled rule, and that instance HTTP ingress is scoped to the ALB's security group rather than a CIDR.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add terraform/security-groups.tf
@@ -690,7 +690,7 @@ Region comes from `var.region`, not a `data "aws_region"` lookup — the attribu
 
 The Auto Scaling group ARN is built by string interpolation rather than read from `aws_autoscaling_group.demo.arn`. That is not laziness: the ASG depends on the instance profile, so reading the ASG's ARN here would create a dependency cycle. The `autoScalingGroup:*` segment wildcards the ASG's generated UUID.
 
-- [ ] **Step 1: Write `terraform/iam.tf`**
+- [x] **Step 1: Write `terraform/iam.tf`**
 
 ```hcl
 data "aws_caller_identity" "current" {}
@@ -843,7 +843,7 @@ resource "aws_iam_role_policy" "fis_cloudwatch" {
 }
 ```
 
-- [ ] **Step 2: Validate and check formatting**
+- [x] **Step 2: Validate and check formatting**
 
 Run:
 ```bash
@@ -853,7 +853,7 @@ terraform -chdir=terraform validate
 
 Expected: `fmt -check` silent; `validate` prints `Success! The configuration is valid.`
 
-- [ ] **Step 3: Confirm both `ec2:CreateTags` conditions are present**
+- [x] **Step 3: Confirm both `ec2:CreateTags` conditions are present**
 
 Run:
 ```bash
@@ -869,7 +869,7 @@ echo OK
 
 Expected: prints `OK`. If either `ec2:CreateTags` condition is missing, the policy is far broader than intended — an instance could rename arbitrary instances in the account.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add terraform/iam.tf
@@ -891,7 +891,7 @@ git commit -m "Add instance and FIS IAM roles"
 
 **Read the format rule before writing a character of this file.** Terraform's `templatefile()` consumes `${...}`. Write every shell variable as `$VAR`, never `${VAR}`. Keeping braces out has a second benefit: the raw template stays valid Bash, so `bash -n` and `shellcheck` run on it directly. The only `${...}` occurrences in the finished file are the three Terraform variables above.
 
-- [ ] **Step 1: Write `terraform/templates/user-data.sh.tftpl`**
+- [x] **Step 1: Write `terraform/templates/user-data.sh.tftpl`**
 
 ```bash
 #!/usr/bin/env bash
@@ -1074,7 +1074,7 @@ aws autoscaling complete-lifecycle-action \
 log "bootstrap complete"
 ```
 
-- [ ] **Step 2: Verify the template is valid Bash as written**
+- [x] **Step 2: Verify the template is valid Bash as written**
 
 Run:
 ```bash
@@ -1086,7 +1086,7 @@ Expected: both silent, exit 0.
 
 If `bash -n` reports a syntax error, you almost certainly wrote a shell variable as `${VAR}` — Bash accepts that, but check the next step, which is the one that catches it.
 
-- [ ] **Step 3: Prove nothing but the three Terraform variables uses brace syntax**
+- [x] **Step 3: Prove nothing but the three Terraform variables uses brace syntax**
 
 Run:
 ```bash
@@ -1104,7 +1104,7 @@ The pattern is deliberately `[^}]*` rather than `[a-z_]*`: Terraform interpolate
 
 Any extra entry is either a shell variable that Terraform will try to interpolate, or prose in a comment. Rewrite shell variables as `$VAR`; reword comments to describe the syntax in words instead of showing it.
 
-- [ ] **Step 4: Confirm the required behaviours are present**
+- [x] **Step 4: Confirm the required behaviours are present**
 
 Run:
 ```bash
@@ -1123,7 +1123,7 @@ echo OK
 
 Expected: prints `OK`.
 
-- [ ] **Step 5: Confirm ABANDON is sent before notifying**
+- [x] **Step 5: Confirm ABANDON is sent before notifying**
 
 Run:
 ```bash
@@ -1135,7 +1135,7 @@ Expected: exactly two matching lines, with `--lifecycle-action-result ABANDON` o
 
 The patterns are deliberately narrow — matching bare `ABANDON` also hits the explanatory comments in that function, which would make the check pass for the wrong reason.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add terraform/templates/user-data.sh.tftpl
@@ -1155,7 +1155,7 @@ git commit -m "Add instance bootstrap script with failure handler"
 
 Two things not to add here. Do **not** set `instance_market_options` — Spot purchasing belongs to the ASG's mixed instances policy, and setting it in both places conflicts. Do **not** add a `Name` tag to the instance `tag_specifications` — instances name themselves in user-data, and propagating a Name here would mean writing one value only to overwrite it seconds later.
 
-- [ ] **Step 1: Write `terraform/launch-template.tf`**
+- [x] **Step 1: Write `terraform/launch-template.tf`**
 
 ```hcl
 # Finds the newest AMI produced by packer/asg-demo.pkr.hcl. This requires that
@@ -1239,7 +1239,7 @@ resource "aws_launch_template" "demo" {
 }
 ```
 
-- [ ] **Step 2: Validate and check formatting**
+- [x] **Step 2: Validate and check formatting**
 
 Run:
 ```bash
@@ -1251,7 +1251,7 @@ Expected: `fmt -check` silent; `validate` prints `Success! The configuration is 
 
 This step also proves the Task 6 template renders: `validate` evaluates `templatefile()` and fails if the template references a variable that is not passed in.
 
-- [ ] **Step 3: Confirm required settings and forbidden ones**
+- [x] **Step 3: Confirm required settings and forbidden ones**
 
 Run:
 ```bash
@@ -1265,7 +1265,7 @@ echo OK
 
 Expected: prints `OK`. The two negative checks guard the traps called out above.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add terraform/launch-template.tf
@@ -1285,7 +1285,7 @@ git commit -m "Add launch template and AMI lookup"
 
 `deregistration_delay = 30` is coupled to the 60s terminate lifecycle hook in Task 9: draining finishes inside the hold, so in-flight requests complete instead of being cut. Do not raise one without the other.
 
-- [ ] **Step 1: Write `terraform/alb.tf`**
+- [x] **Step 1: Write `terraform/alb.tf`**
 
 ```hcl
 resource "aws_lb" "demo" {
@@ -1336,7 +1336,7 @@ resource "aws_lb_listener" "http" {
 }
 ```
 
-- [ ] **Step 2: Validate and check formatting**
+- [x] **Step 2: Validate and check formatting**
 
 Run:
 ```bash
@@ -1346,7 +1346,7 @@ terraform -chdir=terraform validate
 
 Expected: `fmt -check` silent; `validate` prints `Success! The configuration is valid.`
 
-- [ ] **Step 3: Confirm health check and drain values**
+- [x] **Step 3: Confirm health check and drain values**
 
 Run:
 ```bash
@@ -1360,7 +1360,7 @@ echo OK
 
 Expected: prints `OK`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add terraform/alb.tf
@@ -1380,7 +1380,7 @@ git commit -m "Add ALB, target group and listener"
 
 **The single most important detail in this task:** both lifecycle hooks are declared as `initial_lifecycle_hook` blocks **inside** `aws_autoscaling_group`, not as separate `aws_autoscaling_lifecycle_hook` resources. A separate resource is created *after* the ASG, which means the first instances launch before the launch hook exists — they would sail straight to `InService` without waiting for nginx, silently defeating the hook on the very first apply. `initial_lifecycle_hook` exists precisely to close that race.
 
-- [ ] **Step 1: Write `terraform/asg.tf`**
+- [x] **Step 1: Write `terraform/asg.tf`**
 
 ```hcl
 resource "aws_autoscaling_group" "demo" {
@@ -1503,7 +1503,7 @@ resource "aws_autoscaling_policy" "cpu" {
 }
 ```
 
-- [ ] **Step 2: Validate and check formatting**
+- [x] **Step 2: Validate and check formatting**
 
 Run:
 ```bash
@@ -1513,7 +1513,7 @@ terraform -chdir=terraform validate
 
 Expected: `fmt -check` silent; `validate` prints `Success! The configuration is valid.`
 
-- [ ] **Step 3: Confirm every mixed-instances and hook value**
+- [x] **Step 3: Confirm every mixed-instances and hook value**
 
 Run:
 ```bash
@@ -1531,7 +1531,7 @@ echo OK
 
 Expected: prints `OK`.
 
-- [ ] **Step 4: Confirm hooks are declared as initial hooks, with the right timeouts**
+- [x] **Step 4: Confirm hooks are declared as initial hooks, with the right timeouts**
 
 Run:
 ```bash
@@ -1546,7 +1546,7 @@ echo OK
 
 Expected: prints `OK`. If the second check fails, the launch-hook race described above is present.
 
-- [ ] **Step 5: Confirm `price-capacity-optimized` was not used**
+- [x] **Step 5: Confirm `price-capacity-optimized` was not used**
 
 Run:
 ```bash
@@ -1555,7 +1555,7 @@ Run:
 
 Expected: prints `OK`. That strategy ignores override order for Spot, which would discard the instance type prioritisation.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add terraform/asg.tf
@@ -1577,7 +1577,7 @@ Every field name here was verified against the AWS FIS actions reference and the
 
 Unlike the AWS tutorial, which uses `stop_condition { source = "none" }`, this template stops on a CloudWatch alarm. This runs in front of an audience; an experiment that keeps going while healthy hosts hit zero is worse than one that aborts.
 
-- [ ] **Step 1: Write `terraform/fis.tf`**
+- [x] **Step 1: Write `terraform/fis.tf`**
 
 ```hcl
 # Stop condition for the experiment. Minimum statistic over a single 60s period
@@ -1655,7 +1655,7 @@ resource "aws_fis_experiment_template" "spot_interruption" {
 }
 ```
 
-- [ ] **Step 2: Validate and check formatting**
+- [x] **Step 2: Validate and check formatting**
 
 Run:
 ```bash
@@ -1665,7 +1665,7 @@ terraform -chdir=terraform validate
 
 Expected: `fmt -check` silent; `validate` prints `Success! The configuration is valid.`
 
-- [ ] **Step 3: Confirm every FIS field matches the verified values**
+- [x] **Step 3: Confirm every FIS field matches the verified values**
 
 Run:
 ```bash
@@ -1683,7 +1683,7 @@ echo OK
 
 Expected: prints `OK`. A wrong-but-well-formed key here fails only at experiment start, in front of an audience.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add terraform/fis.tf
@@ -1708,7 +1708,7 @@ Outputs and the Makefile ship together because the Makefile is the only consumer
 
 Demo recipes are deliberately **not** silenced with `@`. On stage the audience should see the real AWS CLI call scroll past while the presenter typed three words. Only `help` and multi-line shell loops are silenced, because echoing those is noise rather than information.
 
-- [ ] **Step 1: Write `terraform/outputs.tf`**
+- [x] **Step 1: Write `terraform/outputs.tf`**
 
 ```hcl
 output "alb_dns_name" {
@@ -1737,7 +1737,7 @@ output "region" {
 }
 ```
 
-- [ ] **Step 2: Write the `Makefile`** (remember: TABs, and `$$` for shell `$`)
+- [x] **Step 2: Write the `Makefile`** (remember: TABs, and `$$` for shell `$`)
 
 ```make
 # Command surface for the AWS UG Auto Scaling / Spot demo.
@@ -1873,7 +1873,7 @@ session: ## Shell on an instance via SSM. Usage: make session INSTANCE=i-0abc123
 
 Note on `make status`: the `Purchase` column shows `spot` for Spot instances and is **empty** for On-Demand ones — `InstanceLifecycle` is absent on On-Demand instances. An empty cell there is the On-Demand base instance, not a bug.
 
-- [ ] **Step 3: Validate Terraform and check formatting**
+- [x] **Step 3: Validate Terraform and check formatting**
 
 Run:
 ```bash
@@ -1883,7 +1883,7 @@ terraform -chdir=terraform validate
 
 Expected: `fmt -check` silent; `validate` prints `Success! The configuration is valid.`
 
-- [ ] **Step 4: Prove the Makefile parses and every target exists**
+- [x] **Step 4: Prove the Makefile parses and every target exists**
 
 Run:
 ```bash
@@ -1899,7 +1899,7 @@ Expected: prints only `target check done`. Any `BROKEN TARGET` line means that r
 
 `make -n` prints commands without running them, so this is safe. Note that `-n` still expands `$(shell ...)`, so `terraform output` may print a "no outputs" warning to stderr — harmless, since nothing is applied yet.
 
-- [ ] **Step 5: Prove recipes use tabs, not spaces**
+- [x] **Step 5: Prove recipes use tabs, not spaces**
 
 Run:
 ```bash
@@ -1908,7 +1908,7 @@ Run:
 
 Expected: prints `OK`. A recipe indented with spaces would fail with `missing separator`.
 
-- [ ] **Step 6: Confirm the demo drivers are not silenced and outputs line up**
+- [x] **Step 6: Confirm the demo drivers are not silenced and outputs line up**
 
 Run:
 ```bash
@@ -1923,7 +1923,7 @@ echo OK
 
 Expected: prints `OK` with no `MISSING OUTPUT` lines. The first two greps require a literal TAB before `aws` and prove those recipes are unsilenced, so the audience sees the real command.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add terraform/outputs.tf Makefile
@@ -1944,7 +1944,7 @@ git commit -m "Add Terraform outputs and the Makefile command surface"
 
 Both files end with a `## References` section of links to official AWS documentation. The audience should leave able to check the claims against AWS, not just against this repo.
 
-- [ ] **Step 1: Write `docs/runbook.md`**
+- [x] **Step 1: Write `docs/runbook.md`**
 
 Required structure and content. Write real prose, not an outline.
 
@@ -1962,7 +1962,7 @@ Required structure and content. Write real prose, not an outline.
 - **Troubleshooting:** `terraform plan` failing with "Your query returned no results" means `make ami` has not run. Instances cycling through `ABANDON` in `make activity` means user-data is failing — get the reason from `/var/log/user-data.log` via `make session INSTANCE=...`. `make interrupt` failing means either no Spot instance is currently running or the region lacks FIS.
 - **References:** links to [Lifecycle hooks](https://docs.aws.amazon.com/autoscaling/ec2/userguide/lifecycle-hooks.html), [Target tracking scaling policies](https://docs.aws.amazon.com/autoscaling/ec2/userguide/as-scaling-target-tracking.html), [Test Spot interruptions with AWS FIS](https://docs.aws.amazon.com/fis/latest/userguide/fis-tutorial-spot-interruptions.html), [Run Command](https://docs.aws.amazon.com/systems-manager/latest/userguide/run-command.html).
 
-- [ ] **Step 2: Write `docs/spot-strategy.md`**
+- [x] **Step 2: Write `docs/spot-strategy.md`**
 
 Required structure and content:
 
@@ -1978,7 +1978,7 @@ Required structure and content:
 - **The cost argument**, briefly: Spot is heavily discounted against On-Demand for the same capacity, the fleet keeps an On-Demand floor for availability, and Graviton is cheaper again per unit of work. Do not invent specific percentages or dollar figures — point at the [Spot Instance pricing page](https://aws.amazon.com/ec2/spot/pricing/) and let the reader check current numbers.
 - **References:** links to [mixed instance types and purchase options](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-mixed-instances-groups.html), [Allocation strategies](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-az-instance-type-distribution.html), [Capacity Rebalancing](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-capacity-rebalancing.html), [Burstable performance instances](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances.html).
 
-- [ ] **Step 3: Confirm both docs carry the required facts and links**
+- [x] **Step 3: Confirm both docs carry the required facts and links**
 
 Run:
 ```bash
@@ -1999,7 +1999,7 @@ echo OK
 
 Expected: prints `OK`.
 
-- [ ] **Step 4: Confirm the runbook makes no availability-measurement claim**
+- [x] **Step 4: Confirm the runbook makes no availability-measurement claim**
 
 Run:
 ```bash
@@ -2008,7 +2008,7 @@ grep -qi 'architectural argument' docs/runbook.md && echo OK
 
 Expected: prints `OK`. The runbook must state that the 99.95% figure is not measured by this demo. Overclaiming in front of an audience is the failure mode being guarded against.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/runbook.md docs/spot-strategy.md
@@ -2032,7 +2032,7 @@ git commit -m "Add runbook and Spot strategy documentation"
 
 Every file ends with a `## References` section of official AWS links.
 
-- [ ] **Step 1: Write `docs/lifecycle-hooks.md`**
+- [x] **Step 1: Write `docs/lifecycle-hooks.md`**
 
 Required content:
 
@@ -2045,7 +2045,7 @@ Required content:
 - **The failure handler.** `set -euo pipefail` plus an `ERR` trap routing into `on_failure`, which drops the trap, sends `ABANDON`, then calls the `notify_failure` stub. `ABANDON` goes first because notification is best effort and a hanging webhook must not delay replacement. Note that `create-tags` is deliberately guarded with `|| log` so a cosmetic failure cannot trip the trap and abandon a healthy instance.
 - **References:** [Lifecycle hooks](https://docs.aws.amazon.com/autoscaling/ec2/userguide/lifecycle-hooks.html), [`CompleteLifecycleAction`](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_CompleteLifecycleAction.html), [Target group deregistration delay](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html).
 
-- [ ] **Step 2: Write `docs/fis.md`**
+- [x] **Step 2: Write `docs/fis.md`**
 
 Required content:
 
@@ -2059,7 +2059,7 @@ Required content:
 - **Region constraint, stated prominently:** AWS FIS is not available in `ap-southeast-3` (Jakarta), which is why this demo runs in `ap-southeast-1`. FIS is regional and must run where the instances are, so there is no split-region workaround short of a second full stack.
 - **References:** [FIS actions reference](https://docs.aws.amazon.com/fis/latest/userguide/fis-actions-reference.html), [Test Spot interruptions with AWS FIS](https://docs.aws.amazon.com/fis/latest/userguide/fis-tutorial-spot-interruptions.html), [Spot Instance interruptions](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-interruptions.html), [EC2 instance rebalance recommendation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/rebalance-recommendations.html).
 
-- [ ] **Step 3: Write `docs/packer.md`**
+- [x] **Step 3: Write `docs/packer.md`**
 
 Required content:
 
@@ -2073,7 +2073,7 @@ Required content:
 - **Cleanup:** `make clean-ami`. Terraform does not own the AMI or its snapshot, so `make destroy` leaves them behind and they keep costing money.
 - **References:** [Packer Amazon EBS builder](https://developer.hashicorp.com/packer/integrations/hashicorp/amazon/latest/components/builder/ebs), [AL2023 packages formerly in EPEL](https://docs.aws.amazon.com/linux/al2023/ug/epel.html).
 
-- [ ] **Step 4: Write `docs/instance-refresh.md`**
+- [x] **Step 4: Write `docs/instance-refresh.md`**
 
 Required content:
 
@@ -2085,11 +2085,11 @@ Required content:
 - **State plainly that this is not part of the stage demo** — the door is open if needed, nothing fires automatically.
 - **References:** [Instance refresh](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-instance-refresh.html), [`StartInstanceRefresh`](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_StartInstanceRefresh.html).
 
-- [ ] **Step 5: Write `docs/README.md`**
+- [x] **Step 5: Write `docs/README.md`**
 
 A short index, no more than a screenful: one line on what this directory is, then a table of the six docs with a one-line description each — `runbook.md`, `spot-strategy.md`, `lifecycle-hooks.md`, `fis.md`, `packer.md`, `instance-refresh.md`. Close with a pointer to `../README.md` for the overview and to `superpowers/specs/` for the full design including rejected alternatives.
 
-- [ ] **Step 6: Confirm every doc exists, carries references, and states its key facts**
+- [x] **Step 6: Confirm every doc exists, carries references, and states its key facts**
 
 Run:
 ```bash
@@ -2113,7 +2113,7 @@ echo OK
 
 Expected: prints `OK` with no `MISSING`, `NO REFERENCES` or `NO OFFICIAL LINKS` lines.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add docs/lifecycle-hooks.md docs/fis.md docs/packer.md docs/instance-refresh.md docs/README.md
@@ -2133,7 +2133,7 @@ git commit -m "Add lifecycle hook, FIS, Packer and instance refresh documentatio
 
 This task exists because `README.md` was written before the code and opens with a note saying so. Leaving it in tells readers a working repo is broken; removing it earlier would have claimed code that did not exist.
 
-- [ ] **Step 1: Confirm the whole repository still validates**
+- [x] **Step 1: Confirm the whole repository still validates**
 
 Run:
 ```bash
@@ -2142,7 +2142,7 @@ make validate
 
 Expected: `terraform fmt -check -recursive` silent, `terraform validate` prints `Success! The configuration is valid.`, and `packer validate` prints `The configuration is valid.`
 
-- [ ] **Step 2: Confirm every file the plan promised exists**
+- [x] **Step 2: Confirm every file the plan promised exists**
 
 Run:
 ```bash
@@ -2163,7 +2163,7 @@ echo "file check done"
 
 Expected: prints only `file check done`.
 
-- [ ] **Step 3: Confirm no secrets and no wrong-region references**
+- [x] **Step 3: Confirm no secrets and no wrong-region references**
 
 Run:
 ```bash
@@ -2190,7 +2190,7 @@ Expected: `no key material`, `no webhook URL`, `no wrong-region assignment`.
 
 Do **not** delete that description to make a check pass. It is load-bearing documentation: it is the only place in the Terraform where a reader learns why the region cannot be Jakarta.
 
-- [ ] **Step 4: Remove the status note from `README.md`**
+- [x] **Step 4: Remove the status note from `README.md`**
 
 Delete exactly this block, including the blank line after it:
 
@@ -2200,7 +2200,7 @@ Delete exactly this block, including the blank line after it:
 
 Change nothing else in `README.md`.
 
-- [ ] **Step 5: Confirm the note is gone and nothing else changed**
+- [x] **Step 5: Confirm the note is gone and nothing else changed**
 
 Run:
 ```bash
@@ -2210,7 +2210,7 @@ git diff --stat README.md
 
 Expected: prints `note removed`, and the diff shows `README.md` with 2 deletions and 0 insertions. Any insertion means something else was edited.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add README.md
@@ -2218,6 +2218,22 @@ git commit -m "Drop the not-yet-implemented note from the README"
 ```
 
 ---
+
+## Status: complete
+
+All 14 tasks were implemented and committed (`90d7fc3` through `962c9b5`), then
+reviewed against the spec. Verification at review time: all 15 code files matched
+this plan byte-for-byte, `make validate` passed, and the worktree was clean.
+
+Three defects were found in review, all originating in this plan and the
+`.gitignore` rather than in the implementation, and fixed in `2010750`:
+`make validate` failed on a fresh clone because the target never ran
+`terraform init`; `.terraform.lock.hcl` was gitignored so no provider version
+was pinned; and the README and spec claimed surplus credits were "rarely needed"
+while `make stress` spends them by design. The `validate` target in Task 11 above
+has been corrected so a re-run does not reintroduce the first one.
+
+What remains is not a task in this plan — it is the apply-gated handoff below.
 
 ## Handoff to the repository owner
 
