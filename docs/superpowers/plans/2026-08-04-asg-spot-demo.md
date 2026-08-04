@@ -2166,14 +2166,28 @@ Expected: prints only `file check done`.
 
 Run:
 ```bash
+# Key material must not appear anywhere in the tree.
 git grep -nE 'BEGIN [A-Z ]*PRIVATE KEY' && echo "FAIL: key material" || echo "no key material"
-git grep -n 'hooks.slack.com' && echo "FAIL: webhook URL" || echo "no webhook URL"
-git grep -n 'ap-southeast-3' -- terraform packer Makefile && echo "FAIL: wrong region in code" || echo "no wrong-region code"
+
+# A webhook URL must not appear in code or config. Scoped to code paths on
+# purpose: prose that warns against hardcoding one legitimately names the host,
+# and an unscoped search also matches this very check inside the plan file.
+git grep -n 'hooks.slack.com' -- terraform packer Makefile && echo "FAIL: webhook URL" || echo "no webhook URL"
+
+# The region must never be ASSIGNED as ap-southeast-3. Naming it in a
+# description is correct and wanted -- terraform/variables.tf explains that AWS
+# FIS does not exist there, which is the whole reason this demo runs elsewhere.
+git grep -nE '=[[:space:]]*"ap-southeast-3"' && echo "FAIL: region assigned to Jakarta" || echo "no wrong-region assignment"
 ```
 
-Expected: `no key material`, `no webhook URL`, `no wrong-region code`.
+Expected: `no key material`, `no webhook URL`, `no wrong-region assignment`.
 
-`ap-southeast-3` may legitimately appear in `README.md`, `docs/fis.md` and the spec — those explain why it is *not* used. It must never appear in `terraform/`, `packer/` or the `Makefile`.
+**If you are here because an earlier version of this step failed, read this.** Two of these checks were wrong in the first version of the plan, and the fix is to the *check*, never to the code:
+
+- The webhook search was unscoped, so it matched its own pattern inside this plan file — a tracked file. It now searches only `terraform/`, `packer/` and the `Makefile`.
+- The region search matched any *mention*. But Task 1 mandates a `variables.tf` description that names `ap-southeast-3` precisely to warn the reader off it, so the old check contradicted Task 1. It now matches only an assignment, which is the actual failure mode worth guarding.
+
+Do **not** delete that description to make a check pass. It is load-bearing documentation: it is the only place in the Terraform where a reader learns why the region cannot be Jakarta.
 
 - [ ] **Step 4: Remove the status note from `README.md`**
 
