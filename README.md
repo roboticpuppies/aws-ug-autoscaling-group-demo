@@ -4,8 +4,6 @@ Demo code for the talk **"Auto-Scaling & Spot Instance: SLA 99.95% dengan Biaya 
 
 It stands up a small, complete stack in AWS that runs most of its capacity on Spot Instances — the cheap, interruptible kind — and stays available anyway. Then it deliberately breaks one of those instances, on purpose, in front of you.
 
-> **Status: not yet implemented.** The design is finished (`docs/superpowers/specs/`), but the Terraform and Packer code is still being written. `make apply` will not work yet. This note disappears when the code lands.
-
 ## What this repo is
 
 A throwaway demo, not a production template. It exists to make four things visible rather than merely asserted:
