@@ -91,7 +91,9 @@ A target-tracking policy keeps average CPU at **10%**. That looks absurdly low u
 
 Targeting the baseline means the group adds capacity *before* any instance starts drawing down its credit balance. That keeps the CPU metric linear and honest — which matters, because a burstable instance that runs out of credits in `standard` mode gets throttled to its baseline, and a metric pinned flat at 10% would quietly lie to the very policy reading it.
 
-The instances therefore run in `unlimited` credit mode (the T4g default, pinned explicitly), where bursting is never throttled. Together: `unlimited` guarantees the signal stays truthful, and the 10% target keeps average utilization at or below baseline so surplus credits are rarely needed.
+The instances therefore run in `unlimited` credit mode (the T4g default, pinned explicitly), where bursting is never throttled. `unlimited` is what keeps the signal truthful; the 10% target keeps *steady-state* utilization at or below baseline.
+
+The trade-off, stated plainly: during `make stress` the instances burst to 100%, which does spend surplus credits — and AWS in fact [recommends `standard` mode](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/how-spot-instances-work.html) for short-lived bursty Spot instances for that reason. This demo keeps `unlimited` anyway, because a `standard`-mode t4g receives no launch credits, starts at zero, and would be throttled from boot — risking a bootstrap slow enough to blow the launch hook. Over a 25-minute demo the surplus costs cents.
 
 A side effect worth knowing: `c6g` instances are fixed-performance and have no baseline at all, so on those the 10% target simply means scaling out early. The number is calibrated to the burstable members of the fleet.
 

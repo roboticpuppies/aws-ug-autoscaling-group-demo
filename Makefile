@@ -31,6 +31,7 @@ fmt: ## Format Terraform files
 	$(TF) fmt -recursive
 
 validate: ## Validate Terraform and Packer
+	$(TF) init -backend=false
 	$(TF) fmt -check -recursive
 	$(TF) validate
 	cd packer && packer init . && packer validate .

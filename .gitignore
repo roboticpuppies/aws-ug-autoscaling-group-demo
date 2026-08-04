@@ -1,6 +1,8 @@
 # Terraform
+# .terraform.lock.hcl is deliberately NOT ignored: it records the provider
+# version this config was validated against, so a fresh clone resolves the same
+# one instead of whatever 6.x ships next.
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfvars
