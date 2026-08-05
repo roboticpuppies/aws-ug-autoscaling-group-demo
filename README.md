@@ -264,6 +264,18 @@ Set `ssh_ingress_cidr` to your own address. Do not set it to `0.0.0.0/0`.
 
 Three small instances (mostly Spot) plus one ALB — cents per hour, with the ALB's hourly charge dominating. It is cheap, but not free: destroy it when you are done.
 
+Estimated with [Infracost](https://www.infracost.io/) (`infracost breakdown --path terraform`), default desired capacity of 3 (1 On-Demand + 2 Spot):
+
+| Resource | Monthly Qty | Monthly Cost |
+| --- | --- | --- |
+| ALB — application load balancer | 730 hours | $18.40 |
+| ASG — on-demand `t4g.micro` | 730 hours | $7.74 |
+| ASG — spot `t4g.micro` (×2) | 1,460 hours | $8.61 |
+| CloudWatch alarm (healthy hosts) | 1 alarm | $0.10 |
+| **Total baseline** | | **~$34.85/mo** (~$0.048/hr) |
+
+Baseline only — excludes LCU-based ALB usage cost and data transfer, both usage-dependent. Actual Spot price is usually below the on-demand rate Infracost prices it at, so real cost tends to run lower.
+
 ## Documentation
 
 Deeper explanations live in [`docs/`](docs/):
